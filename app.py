@@ -162,20 +162,36 @@ with tab1:
     <style>
     .kpi-card {
         background: white;
-        padding: 20px;
-        border-radius: 16px;
+        padding: 22px;
+        border-radius: 18px;
         border: 1px solid #E5E7EB;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.06);
-        min-height: 125px;
+        box-shadow: 0 3px 12px rgba(0,0,0,0.08);
+        min-height: 135px;
+        width: 100%;
     }
-    .kpi-title {font-size:14px;color:#6B7280;margin-bottom:8px;}
-    .kpi-value {font-size:26px;font-weight:800;color:#111827;overflow-wrap:anywhere;}
-    .drill-card {
-        background:#F8FAFC;
-        border:1px solid #CBD5E1;
-        border-radius:16px;
-        padding:18px;
-        margin-top:12px;
+    .kpi-title {
+        font-size: 14px;
+        color: #6B7280;
+        margin-bottom: 10px;
+        font-weight: 600;
+    }
+    .kpi-value {
+        font-size: 25px;
+        font-weight: 800;
+        color: #111827;
+        line-height: 1.25;
+        white-space: normal;
+        word-break: break-word;
+    }
+    .amount-value {
+        font-size: 20px !important;
+    }
+    .section-title {
+        font-size: 22px;
+        font-weight: 800;
+        margin-top: 20px;
+        margin-bottom: 12px;
+        color: #111827;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -192,12 +208,13 @@ with tab1:
         except:
             return "0"
 
-    def kpi(title, value):
+    def kpi(title, value, is_amount=False):
+        value_class = "kpi-value amount-value" if is_amount else "kpi-value"
         st.markdown(
             f"""
             <div class="kpi-card">
                 <div class="kpi-title">{title}</div>
-                <div class="kpi-value">{value}</div>
+                <div class="{value_class}">{value}</div>
             </div>
             """,
             unsafe_allow_html=True
@@ -212,21 +229,26 @@ with tab1:
     def mini_summary(df, title):
         st.markdown(f"#### {title}")
         a, b, c, d = st.columns(4)
-        a.metric("Records", f"{len(df):,}")
-        b.metric("PO Count", f"{df['PurchDoc'].nunique():,.0f}")
-        c.metric("PO Value", money_fmt(df["POH"].sum()))
-        d.metric("Pending Qty", f"{df['Still to be del.'].clip(lower=0).sum():,.2f}")
+        with a:
+            kpi("Records", num_fmt(len(df)))
+        with b:
+            kpi("PO Count", num_fmt(df["PurchDoc"].nunique()))
+        with c:
+            kpi("PO Value", money_fmt(df["POH"].sum()), is_amount=True)
+        with d:
+            kpi("Pending Qty", num_fmt(df["Still to be del."].clip(lower=0).sum()))
 
-    def detail_table(df, rows=15):
+    def detail_table(df, rows=20):
         show_cols = [
-            "PurchDoc", "Item", "Item Doc Date", "Vendor Name",
-            "Short Text", "Material", "PO Quantity Sto", "GR Qty",
-            "Still to be del.", "Still to be inv.", "POH", "Plant", "Doc Type"
+            "PurchDoc", "Item", "Item Doc Date", "Vendor/Supplying plant",
+            "Vendor Name", "Short Text", "Material", "Material Description",
+            "PO Quantity Sto", "GR Qty", "Still to be del.", "Still to be inv.",
+            "POH", "Plant", "Doc Type", "Company Name", "Matl Group"
         ]
         available = [c for c in show_cols if c in df.columns]
-        st.dataframe(df[available].head(rows), use_container_width=True, hide_index=True)
+        st.dataframe(df[available].head(rows), use_container_width=True, hide_index=True, height=450)
 
-    st.subheader("Executive Summary")
+    st.markdown('<div class="section-title">Executive Summary</div>', unsafe_allow_html=True)
 
     df_all = load_data()
     df_all = clean_numeric(df_all, ["POH", "PO Quantity Sto", "GR Qty", "Still to be del.", "Still to be inv."])
@@ -260,9 +282,20 @@ with tab1:
     with k2:
         kpi("Total Vendors", num_fmt(filtered_df["Vendor/Supplying plant"].nunique()))
     with k3:
-        kpi("Total PO Value", money_fmt(filtered_df["POH"].sum()))
+        kpi("Total PO Value", money_fmt(filtered_df["POH"].sum()), is_amount=True)
     with k4:
         kpi("Pending Delivery Qty", num_fmt(filtered_df["Still to be del."].clip(lower=0).sum()))
+
+    k5, k6, k7, k8 = st.columns(4)
+    with k5:
+        kpi("Total PO Quantity", num_fmt(filtered_df["PO Quantity Sto"].sum()))
+    with k6:
+        kpi("GR Quantity", num_fmt(filtered_df["GR Qty"].sum()))
+    with k7:
+        kpi("Pending Invoice Qty", num_fmt(filtered_df["Still to be inv."].clip(lower=0).sum()))
+    with k8:
+        avg_po = filtered_df["POH"].sum() / filtered_df["PurchDoc"].nunique() if filtered_df["PurchDoc"].nunique() else 0
+        kpi("Average PO Value", money_fmt(avg_po), is_amount=True)
 
     st.caption(f"Filtered Records: {len(filtered_df):,}")
     st.divider()
@@ -291,9 +324,20 @@ with tab1:
             y="Vendor Name",
             orientation="h",
             text="Total_PO_Value",
-            hover_data=["PO_Count", "Total_Qty", "Pending_Qty"],
+            hover_data={
+                "Total_PO_Value": ":,.2f",
+                "PO_Count": ":,.0f",
+                "Total_Qty": ":,.2f",
+                "Pending_Qty": ":,.2f",
+            },
         )
-        fig_vendor.update_layout(height=620, yaxis={"automargin": True}, margin=dict(l=10, r=40, t=20, b=40))
+        fig_vendor.update_layout(
+            height=700,
+            yaxis={"automargin": True},
+            margin=dict(l=10, r=90, t=20, b=40),
+            xaxis_title="PO Value",
+            yaxis_title="Vendor Name",
+        )
         fig_vendor.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
 
         vendor_event = st.plotly_chart(
@@ -317,8 +361,15 @@ with tab1:
                         vendor_df.groupby("Plant", dropna=True)["POH"]
                         .sum().reset_index().sort_values("POH", ascending=False).head(10)
                     )
-                    fig = px.bar(plant_split, x="POH", y="Plant", orientation="h", text="POH", title="Plant Split")
-                    fig.update_layout(height=350, yaxis={"automargin": True})
+                    fig = px.bar(
+                        plant_split,
+                        x="POH",
+                        y="Plant",
+                        orientation="h",
+                        text="POH",
+                        title="Plant Split",
+                    )
+                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
                     fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -327,8 +378,15 @@ with tab1:
                         vendor_df.groupby("Short Text", dropna=True)["POH"]
                         .sum().reset_index().sort_values("POH", ascending=False).head(10)
                     )
-                    fig = px.bar(mat_split, x="POH", y="Short Text", orientation="h", text="POH", title="Material Split")
-                    fig.update_layout(height=350, yaxis={"automargin": True})
+                    fig = px.bar(
+                        mat_split,
+                        x="POH",
+                        y="Short Text",
+                        orientation="h",
+                        text="POH",
+                        title="Material Split",
+                    )
+                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
                     fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -356,9 +414,20 @@ with tab1:
             y="Short Text",
             orientation="h",
             text="Total_PO_Value",
-            hover_data=["PO_Count", "Total_Qty", "Pending_Qty"],
+            hover_data={
+                "Total_PO_Value": ":,.2f",
+                "PO_Count": ":,.0f",
+                "Total_Qty": ":,.2f",
+                "Pending_Qty": ":,.2f",
+            },
         )
-        fig_material.update_layout(height=620, yaxis={"automargin": True}, margin=dict(l=10, r=40, t=20, b=40))
+        fig_material.update_layout(
+            height=700,
+            yaxis={"automargin": True},
+            margin=dict(l=10, r=90, t=20, b=40),
+            xaxis_title="PO Value",
+            yaxis_title="Material / Short Text",
+        )
         fig_material.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
 
         material_event = st.plotly_chart(
@@ -382,8 +451,15 @@ with tab1:
                         mat_df.groupby("Vendor Name", dropna=True)["POH"]
                         .sum().reset_index().sort_values("POH", ascending=False).head(10)
                     )
-                    fig = px.bar(vendor_split, x="POH", y="Vendor Name", orientation="h", text="POH", title="Vendor Split")
-                    fig.update_layout(height=350, yaxis={"automargin": True})
+                    fig = px.bar(
+                        vendor_split,
+                        x="POH",
+                        y="Vendor Name",
+                        orientation="h",
+                        text="POH",
+                        title="Vendor Split",
+                    )
+                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
                     fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -392,8 +468,15 @@ with tab1:
                         mat_df.groupby("Plant", dropna=True)["POH"]
                         .sum().reset_index().sort_values("POH", ascending=False).head(10)
                     )
-                    fig = px.bar(plant_split, x="POH", y="Plant", orientation="h", text="POH", title="Plant Split")
-                    fig.update_layout(height=350, yaxis={"automargin": True})
+                    fig = px.bar(
+                        plant_split,
+                        x="POH",
+                        y="Plant",
+                        orientation="h",
+                        text="POH",
+                        title="Plant Split",
+                    )
+                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
                     fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -420,9 +503,19 @@ with tab1:
             x="Plant",
             y="Total_Value",
             text="Total_Value",
-            hover_data=["Total_Qty", "PO_Count"],
+            hover_data={
+                "Total_Value": ":,.2f",
+                "Total_Qty": ":,.2f",
+                "PO_Count": ":,.0f",
+            },
         )
-        fig_plant.update_layout(height=530, xaxis_tickangle=-45, margin=dict(l=10, r=40, t=20, b=80))
+        fig_plant.update_layout(
+            height=560,
+            xaxis_tickangle=-45,
+            margin=dict(l=10, r=80, t=20, b=100),
+            xaxis_title="Plant",
+            yaxis_title="Total Value",
+        )
         fig_plant.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
 
         plant_event = st.plotly_chart(
@@ -444,8 +537,15 @@ with tab1:
                     plant_df.groupby("Vendor Name", dropna=True)["POH"]
                     .sum().reset_index().sort_values("POH", ascending=False).head(10)
                 )
-                fig = px.bar(vendor_split, x="POH", y="Vendor Name", orientation="h", text="POH", title="Top Vendors in Plant")
-                fig.update_layout(height=380, yaxis={"automargin": True})
+                fig = px.bar(
+                    vendor_split,
+                    x="POH",
+                    y="Vendor Name",
+                    orientation="h",
+                    text="POH",
+                    title="Top Vendors in Plant",
+                )
+                fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
                 fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
                 st.plotly_chart(fig, use_container_width=True)
 
@@ -470,10 +570,13 @@ with tab1:
             names="Doc Type",
             values="PO_Count",
             hole=0.45,
-            hover_data=["Total_PO_Value", "Pending_Qty"],
+            hover_data={
+                "Total_PO_Value": ":,.2f",
+                "Pending_Qty": ":,.2f",
+            },
         )
         fig_doc.update_traces(textposition="inside", textinfo="percent+label")
-        fig_doc.update_layout(height=530, margin=dict(l=10, r=10, t=20, b=20))
+        fig_doc.update_layout(height=560, margin=dict(l=10, r=10, t=20, b=20))
 
         doc_event = st.plotly_chart(
             fig_doc,
@@ -496,8 +599,15 @@ with tab1:
                         doc_df.groupby("Vendor Name", dropna=True)["POH"]
                         .sum().reset_index().sort_values("POH", ascending=False).head(10)
                     )
-                    fig = px.bar(vendor_split, x="POH", y="Vendor Name", orientation="h", text="POH", title=f"Top Vendors for {selected}")
-                    fig.update_layout(height=350, yaxis={"automargin": True})
+                    fig = px.bar(
+                        vendor_split,
+                        x="POH",
+                        y="Vendor Name",
+                        orientation="h",
+                        text="POH",
+                        title=f"Top Vendors for {selected}",
+                    )
+                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
                     fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -506,8 +616,15 @@ with tab1:
                         doc_df.groupby("Short Text", dropna=True)["POH"]
                         .sum().reset_index().sort_values("POH", ascending=False).head(10)
                     )
-                    fig = px.bar(mat_split, x="POH", y="Short Text", orientation="h", text="POH", title=f"Top Materials for {selected}")
-                    fig.update_layout(height=350, yaxis={"automargin": True})
+                    fig = px.bar(
+                        mat_split,
+                        x="POH",
+                        y="Short Text",
+                        orientation="h",
+                        text="POH",
+                        title=f"Top Materials for {selected}",
+                    )
+                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
                     fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
                     st.plotly_chart(fig, use_container_width=True)
 
@@ -532,8 +649,14 @@ with tab1:
             x="Status",
             y="Quantity",
             text="Quantity",
+            hover_data={"Quantity": ":,.2f"},
         )
-        fig_delivery.update_layout(height=480)
+        fig_delivery.update_layout(
+            height=500,
+            margin=dict(l=10, r=80, t=20, b=60),
+            xaxis_title="Status",
+            yaxis_title="Quantity",
+        )
         fig_delivery.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
         st.plotly_chart(fig_delivery, use_container_width=True)
 
@@ -555,10 +678,31 @@ with tab1:
             x="Month",
             y="PO_Value",
             markers=True,
-            hover_data=["PO_Count"],
+            hover_data={
+                "PO_Value": ":,.2f",
+                "PO_Count": ":,.0f",
+            },
         )
-        fig_trend.update_layout(height=480)
+        fig_trend.update_layout(
+            height=500,
+            margin=dict(l=10, r=50, t=20, b=60),
+            xaxis_title="Month",
+            yaxis_title="PO Value",
+        )
         st.plotly_chart(fig_trend, use_container_width=True)
+
+    st.divider()
+    st.markdown('<div class="section-title">Detailed Data Preview</div>', unsafe_allow_html=True)
+    detail_table(filtered_df, rows=25)
+
+    csv = filtered_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Filtered Data",
+        csv,
+        "ME2J_FILTERED_DATA.csv",
+        "text/csv",
+        use_container_width=True
+    )
 with tab2:
     st.subheader("Filter & Explore Data")
     df = load_data()
