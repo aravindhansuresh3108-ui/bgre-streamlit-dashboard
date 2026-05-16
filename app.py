@@ -743,105 +743,111 @@ with tab2:
     st.download_button("Download Filtered CSV", csv, "ME2J_FILTERED_REPORT.csv", "text/csv")
 
 with tab3:
-    AGENT_FQN = "SNOWFLAKE_POC.ME2J_SCHEMA.BGRE_ME2J_PROCUREMENT_AGENT"
 
-    st.subheader("AI Assistant")
+    st.markdown("""
+    <div class="section-title">AI Assistant</div>
+    """, unsafe_allow_html=True)
+
     st.caption("Connected to Cortex Agent: BGRE_ME2J_PROCUREMENT_AGENT")
 
-    def run_agent(question):
-        payload = json.dumps({
-            "messages": [{
-                "role": "user",
-                "content": [{"type": "text", "text": question}]
-            }]
-        })
+    # ---------------- AI QUESTION BOX ---------------- #
 
-        safe_payload = payload.replace("$$", "$ $")
+    user_question = st.text_input(
+        "Ask AI about ME2J procurement data",
+        placeholder="Example: Show top vendors by PO value"
+    )
 
-        agent_sql = f"""
-            SELECT SNOWFLAKE.CORTEX.DATA_AGENT_RUN(
-                '{AGENT_FQN}',
-                $${safe_payload}$$
-            ) AS RESP
-        """
+    # ---------------- AI RESPONSE FUNCTION ---------------- #
 
-        result_df = pd.read_sql(agent_sql, conn)
-        return result_df["RESP"].iloc[0]
-
-    def parse_agent_response(raw_resp):
-        if isinstance(raw_resp, str):
-            resp = json.loads(raw_resp)
-        else:
-            resp = raw_resp
-
-        final_text = []
-        final_sql = None
-        final_table = None
-        suggestions = []
-
-        for item in resp.get("content", []):
-            item_type = item.get("type")
-
-            if item_type == "text":
-                if item.get("text"):
-                    final_text.append(item["text"])
-
-            elif item_type == "suggested_queries":
-                for q in item.get("suggested_queries", []):
-                    if q.get("query"):
-                        suggestions.append(q["query"])
-
-            elif item_type == "tool_result":
-                for content in item.get("tool_result", {}).get("content", []):
-                    if content.get("type") == "json":
-                        j = content.get("json", {})
-
-                        if j.get("text"):
-                            final_text.append(j["text"])
-
-                        if j.get("sql"):
-                            final_sql = j["sql"]
-
-                        rs = j.get("result_set")
-                        if rs and rs.get("data"):
-                            cols = [
-                                c["name"]
-                                for c in rs.get("resultSetMetaData", {}).get("rowType", [])
-                            ]
-                            final_table = pd.DataFrame(rs["data"], columns=cols if cols else None)
-
-        return {
-            "text": "\n\n".join(final_text) if final_text else "No text response from agent.",
-            "sql": final_sql,
-            "table": final_table,
-            "suggestions": suggestions
-        }
+    def format_currency(val):
+        try:
+            return f"₹{float(val):,.2f}"
+        except:
+            return str(val)
 
     def make_ai_chart(df):
+
         if df is None or df.empty:
             return
 
         chart_df = df.copy()
 
+        # convert numerics
         for col in chart_df.columns:
             chart_df[col] = pd.to_numeric(chart_df[col], errors="ignore")
+
+        # detect date columns
+        date_cols = []
+
+        for col in chart_df.columns:
+
+            if "DATE" in col.upper() or "MONTH" in col.upper():
+
+                converted = pd.to_datetime(chart_df[col], errors="coerce")
+
+                if converted.notna().sum() > 0:
+                    chart_df[col] = converted
+                    date_cols.append(col)
 
         num_cols = chart_df.select_dtypes(include=["number"]).columns.tolist()
         text_cols = chart_df.select_dtypes(include=["object"]).columns.tolist()
 
-        if len(chart_df) == 1 and num_cols:
-            st.markdown("### KPI Result")
-            cols = st.columns(min(len(num_cols), 4))
-            for i, col in enumerate(num_cols[:4]):
-                with cols[i]:
-                    st.metric(col.replace("_", " ").title(), f"{chart_df[col].iloc[0]:,.2f}")
+        st.markdown("### 📊 Visual Insights")
+
+        # -------- DATE TREND CHART -------- #
+
+        if date_cols and num_cols:
+
+            x_col = date_cols[0]
+            y_col = num_cols[0]
+
+            fig = px.line(
+                chart_df,
+                x=x_col,
+                y=y_col,
+                markers=True,
+                text=y_col,
+                title=f"{y_col} Trend by {x_col}"
+            )
+
+            fig.update_traces(
+                texttemplate="%{text:,.2f}",
+                textposition="top center"
+            )
+
+            fig.update_layout(
+                height=550
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
             return
 
+        # -------- KPI VIEW -------- #
+
+        if len(chart_df) == 1 and num_cols:
+
+            st.markdown("### 📌 KPI Summary")
+
+            cols = st.columns(min(len(num_cols), 4))
+
+            for i, col in enumerate(num_cols[:4]):
+
+                with cols[i]:
+
+                    st.metric(
+                        col.replace("_", " ").title(),
+                        format_currency(chart_df[col].iloc[0])
+                    )
+
+            return
+
+        # -------- BAR CHART -------- #
+
         if num_cols and text_cols:
+
             label_col = text_cols[0]
             value_col = num_cols[0]
-
-            st.markdown("### Visual Insight")
 
             fig = px.bar(
                 chart_df.head(20),
@@ -849,80 +855,78 @@ with tab3:
                 y=label_col,
                 orientation="h",
                 text=value_col,
-                title=f"{value_col} by {label_col}",
+                title=f"{value_col} by {label_col}"
             )
+
             fig.update_layout(
-                height=650,
+                height=700,
                 yaxis={"automargin": True},
-                margin=dict(l=10, r=90, t=60, b=40),
+                margin=dict(l=10, r=90, t=60, b=40)
             )
-            fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
+
+            fig.update_traces(
+                texttemplate="%{text:,.2f}",
+                textposition="outside"
+            )
+
             st.plotly_chart(fig, use_container_width=True)
 
-        elif num_cols:
-            st.markdown("### Numeric Trend")
+            return
+
+        # -------- FALLBACK -------- #
+
+        if num_cols:
             st.line_chart(chart_df[num_cols])
 
-    def render_agent_result(parsed):
-        st.markdown("### Answer")
-        st.markdown(parsed["text"])
-
-        if parsed.get("sql"):
-            with st.expander("Generated SQL", expanded=False):
-                st.code(parsed["sql"], language="sql")
-
-        if parsed.get("table") is not None and not parsed["table"].empty:
-            st.markdown("### Result Data")
-            st.dataframe(parsed["table"], use_container_width=True, hide_index=True)
-
-            make_ai_chart(parsed["table"])
-
-            csv = parsed["table"].to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Download AI Result",
-                csv,
-                "AI_RESULT.csv",
-                "text/csv",
-                use_container_width=True
-            )
-
-        if parsed.get("suggestions"):
-            st.markdown("### Suggested Follow-up Questions")
-            for q in parsed["suggestions"][:5]:
-                st.write(f"- {q}")
-
-    if "me2j_agent_messages" not in st.session_state:
-        st.session_state.me2j_agent_messages = []
-
-    for msg in st.session_state.me2j_agent_messages:
-        with st.chat_message(msg["role"]):
-            if msg["role"] == "assistant":
-                render_agent_result(msg["content"])
-            else:
-                st.markdown(msg["content"])
-
-    user_question = st.chat_input("Ask about ME2J procurement data...")
+    # ---------------- AI EXECUTION ---------------- #
 
     if user_question:
-        st.session_state.me2j_agent_messages.append({
-            "role": "user",
-            "content": user_question
-        })
 
-        with st.chat_message("user"):
-            st.markdown(user_question)
+        with st.spinner("AI is analyzing procurement data..."):
 
-        with st.chat_message("assistant"):
-            with st.spinner("Cortex Agent is analyzing..."):
-                try:
-                    raw_response = run_agent(user_question)
-                    parsed = parse_agent_response(raw_response)
-                    render_agent_result(parsed)
+            try:
 
-                    st.session_state.me2j_agent_messages.append({
-                        "role": "assistant",
-                        "content": parsed
-                    })
+                response = cortex_agent.complete(user_question)
 
-                except Exception as e:
-                    st.error(f"Agent error: {e}")
+                answer_text = response.get("answer", "No answer received.")
+
+                st.markdown("## 🤖 AI Analysis")
+
+                st.markdown(answer_text)
+
+                generated_sql = response.get("sql", "")
+
+                if generated_sql:
+
+                    with st.expander("Generated SQL"):
+
+                        st.code(generated_sql, language="sql")
+
+                        ai_df = pd.read_sql(generated_sql, conn)
+
+                        if not ai_df.empty:
+
+                            st.markdown("## 📋 Result Data")
+
+                            display_df = ai_df.copy()
+
+                            for col in display_df.columns:
+
+                                if pd.api.types.is_numeric_dtype(display_df[col]):
+
+                                    display_df[col] = display_df[col].apply(format_currency)
+
+                            st.dataframe(
+                                display_df,
+                                use_container_width=True,
+                                hide_index=True
+                            )
+
+                            make_ai_chart(ai_df)
+
+                        else:
+                            st.warning("No data returned from AI query.")
+
+            except Exception as e:
+
+                st.error(f"Agent error: {str(e)}")
