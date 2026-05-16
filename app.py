@@ -750,12 +750,10 @@ with tab3:
 
     def run_agent(question):
         payload = json.dumps({
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [{"type": "text", "text": question}]
-                }
-            ]
+            "messages": [{
+                "role": "user",
+                "content": [{"type": "text", "text": question}]
+            }]
         })
 
         safe_payload = payload.replace("$$", "$ $")
@@ -785,34 +783,32 @@ with tab3:
             item_type = item.get("type")
 
             if item_type == "text":
-                text = item.get("text", "")
-                if text:
-                    final_text.append(text)
+                if item.get("text"):
+                    final_text.append(item["text"])
 
-            if item_type == "suggested_queries":
+            elif item_type == "suggested_queries":
                 for q in item.get("suggested_queries", []):
                     if q.get("query"):
                         suggestions.append(q["query"])
 
-            if item_type == "tool_result":
-                tool_result = item.get("tool_result", {})
-                for content in tool_result.get("content", []):
+            elif item_type == "tool_result":
+                for content in item.get("tool_result", {}).get("content", []):
                     if content.get("type") == "json":
-                        json_data = content.get("json", {})
+                        j = content.get("json", {})
 
-                        if json_data.get("text"):
-                            final_text.append(json_data["text"])
+                        if j.get("text"):
+                            final_text.append(j["text"])
 
-                        if json_data.get("sql"):
-                            final_sql = json_data["sql"]
+                        if j.get("sql"):
+                            final_sql = j["sql"]
 
-                        result_set = json_data.get("result_set")
-                        if result_set and result_set.get("data"):
-                            columns = [
-                                col["name"]
-                                for col in result_set.get("resultSetMetaData", {}).get("rowType", [])
+                        rs = j.get("result_set")
+                        if rs and rs.get("data"):
+                            cols = [
+                                c["name"]
+                                for c in rs.get("resultSetMetaData", {}).get("rowType", [])
                             ]
-                            final_table = pd.DataFrame(result_set["data"], columns=columns)
+                            final_table = pd.DataFrame(rs["data"], columns=cols if cols else None)
 
         return {
             "text": "\n\n".join(final_text) if final_text else "No text response from agent.",
@@ -821,36 +817,96 @@ with tab3:
             "suggestions": suggestions
         }
 
+    def make_ai_chart(df):
+        if df is None or df.empty:
+            return
+
+        chart_df = df.copy()
+
+        for col in chart_df.columns:
+            chart_df[col] = pd.to_numeric(chart_df[col], errors="ignore")
+
+        num_cols = chart_df.select_dtypes(include=["number"]).columns.tolist()
+        text_cols = chart_df.select_dtypes(include=["object"]).columns.tolist()
+
+        if len(chart_df) == 1 and num_cols:
+            st.markdown("### KPI Result")
+            cols = st.columns(min(len(num_cols), 4))
+            for i, col in enumerate(num_cols[:4]):
+                with cols[i]:
+                    st.metric(col.replace("_", " ").title(), f"{chart_df[col].iloc[0]:,.2f}")
+            return
+
+        if num_cols and text_cols:
+            label_col = text_cols[0]
+            value_col = num_cols[0]
+
+            st.markdown("### Visual Insight")
+
+            fig = px.bar(
+                chart_df.head(20),
+                x=value_col,
+                y=label_col,
+                orientation="h",
+                text=value_col,
+                title=f"{value_col} by {label_col}",
+            )
+            fig.update_layout(
+                height=650,
+                yaxis={"automargin": True},
+                margin=dict(l=10, r=90, t=60, b=40),
+            )
+            fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
+            st.plotly_chart(fig, use_container_width=True)
+
+        elif num_cols:
+            st.markdown("### Numeric Trend")
+            st.line_chart(chart_df[num_cols])
+
+    def render_agent_result(parsed):
+        st.markdown("### Answer")
+        st.markdown(parsed["text"])
+
+        if parsed.get("sql"):
+            with st.expander("Generated SQL", expanded=False):
+                st.code(parsed["sql"], language="sql")
+
+        if parsed.get("table") is not None and not parsed["table"].empty:
+            st.markdown("### Result Data")
+            st.dataframe(parsed["table"], use_container_width=True, hide_index=True)
+
+            make_ai_chart(parsed["table"])
+
+            csv = parsed["table"].to_csv(index=False).encode("utf-8")
+            st.download_button(
+                "Download AI Result",
+                csv,
+                "AI_RESULT.csv",
+                "text/csv",
+                use_container_width=True
+            )
+
+        if parsed.get("suggestions"):
+            st.markdown("### Suggested Follow-up Questions")
+            for q in parsed["suggestions"][:5]:
+                st.write(f"- {q}")
+
     if "me2j_agent_messages" not in st.session_state:
         st.session_state.me2j_agent_messages = []
 
     for msg in st.session_state.me2j_agent_messages:
         with st.chat_message(msg["role"]):
             if msg["role"] == "assistant":
-                st.markdown(msg["text"])
-
-                if msg.get("sql"):
-                    with st.expander("Generated SQL"):
-                        st.code(msg["sql"], language="sql")
-
-                if msg.get("table") is not None:
-                    st.dataframe(msg["table"], use_container_width=True, hide_index=True)
-
-                    num_cols = msg["table"].select_dtypes(include=["number"]).columns.tolist()
-                    text_cols = msg["table"].select_dtypes(include=["object"]).columns.tolist()
-
-                    if num_cols and text_cols:
-                        st.bar_chart(msg["table"], x=text_cols[0], y=num_cols[0])
-
+                render_agent_result(msg["content"])
             else:
-                st.markdown(msg["text"])
+                st.markdown(msg["content"])
 
     user_question = st.chat_input("Ask about ME2J procurement data...")
 
     if user_question:
         st.session_state.me2j_agent_messages.append({
             "role": "user",
-            "text": user_question
+            "content": user_question
         })
 
         with st.chat_message("user"):
@@ -861,38 +917,12 @@ with tab3:
                 try:
                     raw_response = run_agent(user_question)
                     parsed = parse_agent_response(raw_response)
-
-                    st.markdown(parsed["text"])
-
-                    if parsed["sql"]:
-                        with st.expander("Generated SQL"):
-                            st.code(parsed["sql"], language="sql")
-
-                    if parsed["table"] is not None:
-                        st.dataframe(parsed["table"], use_container_width=True, hide_index=True)
-
-                        num_cols = parsed["table"].select_dtypes(include=["number"]).columns.tolist()
-                        text_cols = parsed["table"].select_dtypes(include=["object"]).columns.tolist()
-
-                        if num_cols and text_cols:
-                            st.bar_chart(parsed["table"], x=text_cols[0], y=num_cols[0])
-
-                    if parsed["suggestions"]:
-                        st.caption("Suggested follow-up questions:")
-                        for q in parsed["suggestions"][:3]:
-                            st.write(f"- {q}")
+                    render_agent_result(parsed)
 
                     st.session_state.me2j_agent_messages.append({
                         "role": "assistant",
-                        "text": parsed["text"],
-                        "sql": parsed["sql"],
-                        "table": parsed["table"]
+                        "content": parsed
                     })
 
                 except Exception as e:
-                    error_msg = f"Agent error: {e}"
-                    st.error(error_msg)
-                    st.session_state.me2j_agent_messages.append({
-                        "role": "assistant",
-                        "text": error_msg
-                    })
+                    st.error(f"Agent error: {e}")
