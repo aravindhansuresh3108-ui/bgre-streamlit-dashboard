@@ -30,7 +30,7 @@ def get_secret(name, default=""):
 
 conn = snowflake.connector.connect(
     user=get_secret("user", "BGRE_CLIENT"),
-    password=get_secret("password", ""),
+    password=get_secret("password", "BGRE@123456789a"),
     account=get_secret("account", "TVSNEXT-TVSNEXT"),
     warehouse=get_secret("warehouse", "BGRE_WH"),
     database=get_secret("database", "SNOWFLAKE_POC"),
