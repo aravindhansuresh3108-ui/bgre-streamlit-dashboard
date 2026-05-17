@@ -724,7 +724,7 @@ with tab3:
             if not parsed.get("chart_spec"):
                 make_ai_chart(parsed["table"])
             csv = parsed["table"].to_csv(index=False).encode("utf-8")
-            st.download_button("Download AI Result", csv, "MBBS_AI_RESULT.csv", "text/csv", use_container_width=True)
+            st.download_button("Download AI Result", csv, "MBBS_AI_RESULT.csv", "text/csv", use_container_width=True, key=f"ai_download_{len(st.session_state.mbbs_agent_messages)}")
 
         if parsed.get("suggestions"):
             st.markdown("### Suggested Follow-up Questions")
