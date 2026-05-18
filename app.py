@@ -28,6 +28,14 @@ BGR_LOGO_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 200" 
   <text x="80" y="165" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700" fill="#E31937" letter-spacing="6">ENERGY</text>
 </svg>"""
 
+PLOTLY_CONFIG = {
+    "displayModeBar": False,
+    "displaylogo": False,
+    "scrollZoom": False,
+    "doubleClick": False,
+    "responsive": True,
+}
+
 @st.cache_data(ttl=300)
 def load_data():
     return pd.read_sql("SELECT * FROM SNOWFLAKE_POC.ME2J_SCHEMA.ME2J_FINAL_REPORT", conn)
@@ -145,6 +153,128 @@ def get_vendor_count_by_plant():
 def clear_all_caches():
     st.cache_data.clear()
 
+def money_fmt(v):
+    try:
+        return f"INR {float(v):,.2f}"
+    except Exception:
+        return "INR 0.00"
+
+def num_fmt(v):
+    try:
+        return f"{float(v):,.0f}"
+    except Exception:
+        return "0"
+
+def clean_numeric(df, cols):
+    for c in cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    return df
+
+def kpi(title, value, is_amount=False):
+    value_class = "kpi-value amount-value" if is_amount else "kpi-value"
+    st.markdown(
+        f"""
+        <div class="kpi-card">
+            <div class="kpi-title">{title}</div>
+            <div class="{value_class}">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+def mini_summary(df, title):
+    st.markdown(f"#### {title}")
+    a, b, c, d = st.columns(4)
+    with a:
+        kpi("Records", num_fmt(len(df)))
+    with b:
+        kpi("PO Count", num_fmt(df["PurchDoc"].nunique() if "PurchDoc" in df.columns else 0))
+    with c:
+        kpi("PO Value", money_fmt(df["POH"].sum() if "POH" in df.columns else 0), is_amount=True)
+    with d:
+        pending = df["Still to be del."].clip(lower=0).sum() if "Still to be del." in df.columns else 0
+        kpi("Pending Qty", num_fmt(pending))
+
+def detail_table(df, rows=20):
+    show_cols = [
+        "PurchDoc", "Item", "Item Doc Date", "Vendor/Supplying plant",
+        "Vendor Name", "Short Text", "Material", "Material Description",
+        "PO Quantity Sto", "GR Qty", "Still to be del.", "Still to be inv.",
+        "POH", "Plant", "Doc Type", "Company Name", "Matl Group"
+    ]
+    available = [c for c in show_cols if c in df.columns]
+    st.dataframe(df[available].head(rows), use_container_width=True, hide_index=True, height=420)
+
+def clean_chart(fig, height=520):
+    fig.update_layout(
+        height=height,
+        dragmode=False,
+        hovermode="closest",
+        clickmode="event",
+        margin=dict(l=10, r=80, t=25, b=60),
+        font=dict(size=11),
+    )
+    fig.update_traces(
+        selected=dict(marker=dict(opacity=1)),
+        unselected=dict(marker=dict(opacity=0.95)),
+    )
+    return fig
+
+def chart_event(fig, key):
+    # on_select is used only for click drilldown. selection_mode is intentionally not passed,
+    # because selection_mode creates the 4-side drag cursor in Plotly.
+    return st.plotly_chart(
+        fig,
+        use_container_width=True,
+        key=key,
+        on_select="rerun",
+        config=PLOTLY_CONFIG,
+    )
+
+def pie_chart_event(fig, key):
+    # Pie/donut charts need explicit point selection in some Streamlit/Plotly versions.
+    return st.plotly_chart(
+        fig,
+        use_container_width=True,
+        key=key,
+        on_select="rerun",
+        selection_mode="points",
+        config=PLOTLY_CONFIG,
+    )
+
+@st.dialog("Drilldown Details", width="large")
+def show_popup(title, df):
+    st.markdown(f"### {title}")
+    mini_summary(df, title)
+    st.markdown("#### Detailed Records")
+    detail_table(df, rows=50)
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Drilldown Data",
+        csv,
+        "ME2J_DRILLDOWN_DATA.csv",
+        "text/csv",
+        use_container_width=True
+    )
+
+def get_clicked_value(event, field):
+    try:
+        if event and event.selection.points:
+            pt = event.selection.points[0]
+            if field in pt and pt.get(field) is not None:
+                return pt.get(field)
+            # Pie charts sometimes expose the clicked slice under different keys.
+            for alt in ["label", "theta", "legendgroup", "customdata", "point_name", "name"]:
+                if alt in pt and pt.get(alt) is not None:
+                    val = pt.get(alt)
+                    if isinstance(val, (list, tuple)) and val:
+                        return val[0]
+                    return val
+    except Exception:
+        return None
+    return None
+
 with st.sidebar:
     st.markdown(BGR_LOGO_SVG, unsafe_allow_html=True)
     st.caption("ME2J Procurement Dashboard")
@@ -193,60 +323,42 @@ with tab1:
         margin-bottom: 12px;
         color: #111827;
     }
+    .stPlotlyChart,
+    .stPlotlyChart *,
+    .js-plotly-plot,
+    .js-plotly-plot *,
+    .plot-container,
+    .plot-container *,
+    .svg-container,
+    .svg-container *,
+    .main-svg,
+    .main-svg *,
+    .cartesianlayer,
+    .cartesianlayer *,
+    .pielayer,
+    .pielayer *,
+    .slice,
+    .barlayer,
+    .barlayer *,
+    .scatterlayer,
+    .scatterlayer *,
+    .nsewdrag,
+    .drag,
+    .draglayer,
+    .draglayer *,
+    .zoomlayer,
+    .cursor-crosshair,
+    .cursor-move,
+    .cursor-pointer,
+    .cursor-ew-resize,
+    .cursor-ns-resize {
+        cursor: default !important;
+    }
+    .modebar {
+        display: none !important;
+    }
     </style>
     """, unsafe_allow_html=True)
-
-    def money_fmt(v):
-        try:
-            return f"INR {float(v):,.2f}"
-        except:
-            return "INR 0.00"
-
-    def num_fmt(v):
-        try:
-            return f"{float(v):,.0f}"
-        except:
-            return "0"
-
-    def kpi(title, value, is_amount=False):
-        value_class = "kpi-value amount-value" if is_amount else "kpi-value"
-        st.markdown(
-            f"""
-            <div class="kpi-card">
-                <div class="kpi-title">{title}</div>
-                <div class="{value_class}">{value}</div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-    def clean_numeric(df, cols):
-        for c in cols:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-        return df
-
-    def mini_summary(df, title):
-        st.markdown(f"#### {title}")
-        a, b, c, d = st.columns(4)
-        with a:
-            kpi("Records", num_fmt(len(df)))
-        with b:
-            kpi("PO Count", num_fmt(df["PurchDoc"].nunique()))
-        with c:
-            kpi("PO Value", money_fmt(df["POH"].sum()), is_amount=True)
-        with d:
-            kpi("Pending Qty", num_fmt(df["Still to be del."].clip(lower=0).sum()))
-
-    def detail_table(df, rows=20):
-        show_cols = [
-            "PurchDoc", "Item", "Item Doc Date", "Vendor/Supplying plant",
-            "Vendor Name", "Short Text", "Material", "Material Description",
-            "PO Quantity Sto", "GR Qty", "Still to be del.", "Still to be inv.",
-            "POH", "Plant", "Doc Type", "Company Name", "Matl Group"
-        ]
-        available = [c for c in show_cols if c in df.columns]
-        st.dataframe(df[available].head(rows), use_container_width=True, hide_index=True, height=450)
 
     st.markdown('<div class="section-title">Executive Summary</div>', unsafe_allow_html=True)
 
@@ -300,256 +412,111 @@ with tab1:
     st.caption(f"Filtered Records: {len(filtered_df):,}")
     st.divider()
 
+    popup_title = None
+    popup_df = None
+
+    # Pre-aggregations
+    vendor_chart = (
+        filtered_df.groupby("Vendor Name", dropna=True)
+        .agg(
+            Total_PO_Value=("POH", "sum"),
+            PO_Count=("PurchDoc", "nunique"),
+            Total_Qty=("PO Quantity Sto", "sum"),
+            Pending_Qty=("Still to be del.", "sum"),
+        )
+        .reset_index()
+        .sort_values("Total_PO_Value", ascending=False)
+        .head(15)
+    )
+
+    material_chart = (
+        filtered_df.groupby("Short Text", dropna=True)
+        .agg(
+            Total_PO_Value=("POH", "sum"),
+            PO_Count=("PurchDoc", "nunique"),
+            Total_Qty=("PO Quantity Sto", "sum"),
+            Pending_Qty=("Still to be del.", "sum"),
+            Pending_Invoice=("Still to be inv.", "sum"),
+        )
+        .reset_index()
+        .sort_values("Total_PO_Value", ascending=False)
+        .head(15)
+    )
+
     chart1, chart2 = st.columns(2)
 
     with chart1:
         st.markdown("### Top Vendors by PO Value")
-
-        vendor_chart = (
-            filtered_df.groupby("Vendor Name", dropna=True)
-            .agg(
-                Total_PO_Value=("POH", "sum"),
-                PO_Count=("PurchDoc", "nunique"),
-                Total_Qty=("PO Quantity Sto", "sum"),
-                Pending_Qty=("Still to be del.", "sum"),
-            )
-            .reset_index()
-            .sort_values("Total_PO_Value", ascending=False)
-            .head(15)
-        )
-
         fig_vendor = px.bar(
             vendor_chart,
             x="Total_PO_Value",
             y="Vendor Name",
             orientation="h",
             text="Total_PO_Value",
-            hover_data={
-                "Total_PO_Value": ":,.2f",
-                "PO_Count": ":,.0f",
-                "Total_Qty": ":,.2f",
-                "Pending_Qty": ":,.2f",
-            },
+            custom_data=["PO_Count", "Total_Qty", "Pending_Qty"],
         )
-        fig_vendor.update_layout(
-            height=700,
-            yaxis={"automargin": True},
-            margin=dict(l=10, r=90, t=20, b=40),
-            xaxis_title="PO Value",
-            yaxis_title="Vendor Name",
+        fig_vendor.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="outside",
+            hovertemplate="<b>%{y}</b><br>PO Value: INR %{x:,.2f}<br>PO Count: %{customdata[0]:,.0f}<br>Total Qty: %{customdata[1]:,.2f}<br>Pending Qty: %{customdata[2]:,.2f}<extra></extra>"
         )
-        fig_vendor.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-
-        vendor_event = st.plotly_chart(
-            fig_vendor,
-            use_container_width=True,
-            key="vendor_power_chart",
-            on_select="rerun",
-            selection_mode="points",
-        )
-
-        if vendor_event and vendor_event.selection.points:
-            selected = vendor_event.selection.points[0]["y"]
-            vendor_df = filtered_df[filtered_df["Vendor Name"].astype(str) == str(selected)]
-
-            with st.container(border=True):
-                mini_summary(vendor_df, f"Vendor Drilldown: {selected}")
-
-                d1, d2 = st.columns(2)
-                with d1:
-                    plant_split = (
-                        vendor_df.groupby("Plant", dropna=True)["POH"]
-                        .sum().reset_index().sort_values("POH", ascending=False).head(10)
-                    )
-                    fig = px.bar(
-                        plant_split,
-                        x="POH",
-                        y="Plant",
-                        orientation="h",
-                        text="POH",
-                        title="Plant Split",
-                    )
-                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
-                    fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-                    st.plotly_chart(fig, use_container_width=True)
-
-                with d2:
-                    mat_split = (
-                        vendor_df.groupby("Short Text", dropna=True)["POH"]
-                        .sum().reset_index().sort_values("POH", ascending=False).head(10)
-                    )
-                    fig = px.bar(
-                        mat_split,
-                        x="POH",
-                        y="Short Text",
-                        orientation="h",
-                        text="POH",
-                        title="Material Split",
-                    )
-                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
-                    fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-                    st.plotly_chart(fig, use_container_width=True)
-
-                detail_table(vendor_df)
+        fig_vendor.update_layout(yaxis={"automargin": True}, xaxis_title="PO Value", yaxis_title="Vendor Name")
+        event = chart_event(clean_chart(fig_vendor, 620), "vendor_chart_click")
+        selected = get_clicked_value(event, "y")
+        if selected:
+            popup_title = f"Vendor Drilldown: {selected}"
+            popup_df = filtered_df[filtered_df["Vendor Name"].astype(str) == str(selected)]
 
     with chart2:
         st.markdown("### Top Materials by PO Value")
-
-        material_chart = (
-            filtered_df.groupby("Short Text", dropna=True)
-            .agg(
-                Total_PO_Value=("POH", "sum"),
-                PO_Count=("PurchDoc", "nunique"),
-                Total_Qty=("PO Quantity Sto", "sum"),
-                Pending_Qty=("Still to be del.", "sum"),
-            )
-            .reset_index()
-            .sort_values("Total_PO_Value", ascending=False)
-            .head(15)
-        )
-
         fig_material = px.bar(
             material_chart,
             x="Total_PO_Value",
             y="Short Text",
             orientation="h",
             text="Total_PO_Value",
-            hover_data={
-                "Total_PO_Value": ":,.2f",
-                "PO_Count": ":,.0f",
-                "Total_Qty": ":,.2f",
-                "Pending_Qty": ":,.2f",
-            },
+            custom_data=["PO_Count", "Total_Qty", "Pending_Qty", "Pending_Invoice"],
         )
-        fig_material.update_layout(
-            height=700,
-            yaxis={"automargin": True},
-            margin=dict(l=10, r=90, t=20, b=40),
-            xaxis_title="PO Value",
-            yaxis_title="Material / Short Text",
+        fig_material.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="outside",
+            hovertemplate="<b>%{y}</b><br>PO Value: INR %{x:,.2f}<br>PO Count: %{customdata[0]:,.0f}<br>Total Qty: %{customdata[1]:,.2f}<br>Pending Delivery: %{customdata[2]:,.2f}<br>Pending Invoice: %{customdata[3]:,.2f}<extra></extra>"
         )
-        fig_material.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-
-        material_event = st.plotly_chart(
-            fig_material,
-            use_container_width=True,
-            key="material_power_chart",
-            on_select="rerun",
-            selection_mode="points",
-        )
-
-        if material_event and material_event.selection.points:
-            selected = material_event.selection.points[0]["y"]
-            mat_df = filtered_df[filtered_df["Short Text"].astype(str) == str(selected)]
-
-            with st.container(border=True):
-                mini_summary(mat_df, f"Material Drilldown: {selected}")
-
-                d1, d2 = st.columns(2)
-                with d1:
-                    vendor_split = (
-                        mat_df.groupby("Vendor Name", dropna=True)["POH"]
-                        .sum().reset_index().sort_values("POH", ascending=False).head(10)
-                    )
-                    fig = px.bar(
-                        vendor_split,
-                        x="POH",
-                        y="Vendor Name",
-                        orientation="h",
-                        text="POH",
-                        title="Vendor Split",
-                    )
-                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
-                    fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-                    st.plotly_chart(fig, use_container_width=True)
-
-                with d2:
-                    plant_split = (
-                        mat_df.groupby("Plant", dropna=True)["POH"]
-                        .sum().reset_index().sort_values("POH", ascending=False).head(10)
-                    )
-                    fig = px.bar(
-                        plant_split,
-                        x="POH",
-                        y="Plant",
-                        orientation="h",
-                        text="POH",
-                        title="Plant Split",
-                    )
-                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
-                    fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-                    st.plotly_chart(fig, use_container_width=True)
-
-                detail_table(mat_df)
+        fig_material.update_layout(yaxis={"automargin": True}, xaxis_title="PO Value", yaxis_title="Material / Short Text")
+        event = chart_event(clean_chart(fig_material, 620), "material_chart_click")
+        selected = get_clicked_value(event, "y")
+        if selected:
+            popup_title = f"Material Drilldown: {selected}"
+            popup_df = filtered_df[filtered_df["Short Text"].astype(str) == str(selected)]
 
     chart3, chart4 = st.columns(2)
 
     with chart3:
         st.markdown("### Plant Wise Procurement")
-
         plant_chart = (
             filtered_df.groupby("Plant", dropna=True)
-            .agg(
-                Total_Value=("POH", "sum"),
-                Total_Qty=("PO Quantity Sto", "sum"),
-                PO_Count=("PurchDoc", "nunique"),
-            )
+            .agg(Total_Value=("POH", "sum"), Total_Qty=("PO Quantity Sto", "sum"), PO_Count=("PurchDoc", "nunique"))
             .reset_index()
             .sort_values("Total_Value", ascending=False)
         )
-
         fig_plant = px.bar(
             plant_chart,
             x="Plant",
             y="Total_Value",
             text="Total_Value",
-            hover_data={
-                "Total_Value": ":,.2f",
-                "Total_Qty": ":,.2f",
-                "PO_Count": ":,.0f",
-            },
+            custom_data=["Total_Qty", "PO_Count"],
         )
-        fig_plant.update_layout(
-            height=560,
-            xaxis_tickangle=-45,
-            margin=dict(l=10, r=80, t=20, b=100),
-            xaxis_title="Plant",
-            yaxis_title="Total Value",
+        fig_plant.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="outside",
+            hovertemplate="<b>Plant %{x}</b><br>Total Value: INR %{y:,.2f}<br>Total Qty: %{customdata[0]:,.2f}<br>PO Count: %{customdata[1]:,.0f}<extra></extra>"
         )
-        fig_plant.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-
-        plant_event = st.plotly_chart(
-            fig_plant,
-            use_container_width=True,
-            key="plant_power_chart",
-            on_select="rerun",
-            selection_mode="points",
-        )
-
-        if plant_event and plant_event.selection.points:
-            selected = plant_event.selection.points[0]["x"]
-            plant_df = filtered_df[filtered_df["Plant"].astype(str) == str(selected)]
-
-            with st.container(border=True):
-                mini_summary(plant_df, f"Plant Drilldown: {selected}")
-
-                vendor_split = (
-                    plant_df.groupby("Vendor Name", dropna=True)["POH"]
-                    .sum().reset_index().sort_values("POH", ascending=False).head(10)
-                )
-                fig = px.bar(
-                    vendor_split,
-                    x="POH",
-                    y="Vendor Name",
-                    orientation="h",
-                    text="POH",
-                    title="Top Vendors in Plant",
-                )
-                fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
-                fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-                st.plotly_chart(fig, use_container_width=True)
-
-                detail_table(plant_df)
+        fig_plant.update_layout(xaxis_tickangle=-45, xaxis_title="Plant", yaxis_title="Total Value")
+        event = chart_event(clean_chart(fig_plant, 520), "plant_chart_click")
+        selected = get_clicked_value(event, "x")
+        if selected:
+            popup_title = f"Plant Drilldown: {selected}"
+            popup_df = filtered_df[filtered_df["Plant"].astype(str) == str(selected)]
 
     with chart4:
         st.markdown("### Document Type Distribution")
@@ -565,76 +532,37 @@ with tab1:
             .sort_values("PO_Count", ascending=False)
         )
 
-        fig_doc = px.pie(
+        fig_doc = px.bar(
             doc_chart,
-            names="Doc Type",
-            values="PO_Count",
-            hole=0.45,
-            hover_data={
-                "Total_PO_Value": ":,.2f",
-                "Pending_Qty": ":,.2f",
-            },
+            x="PO_Count",
+            y="Doc Type",
+            orientation="h",
+            text="PO_Count",
+            custom_data=["Total_PO_Value", "Pending_Qty"],
         )
-        fig_doc.update_traces(textposition="inside", textinfo="percent+label")
-        fig_doc.update_layout(height=560, margin=dict(l=10, r=10, t=20, b=20))
-
-        doc_event = st.plotly_chart(
-            fig_doc,
-            use_container_width=True,
-            key="doc_power_chart",
-            on_select="rerun",
-            selection_mode="points",
+        fig_doc.update_traces(
+            texttemplate="%{text:,.0f}",
+            textposition="outside",
+            hovertemplate="<b>%{y}</b><br>PO Count: %{x:,.0f}<br>PO Value: INR %{customdata[0]:,.2f}<br>Pending Qty: %{customdata[1]:,.2f}<extra></extra>"
+        )
+        fig_doc.update_layout(
+            yaxis={"automargin": True},
+            xaxis_title="PO Count",
+            yaxis_title="Document Type"
         )
 
-        if doc_event and doc_event.selection.points:
-            selected = doc_event.selection.points[0]["label"]
-            doc_df = filtered_df[filtered_df["Doc Type"].astype(str) == str(selected)]
+        event = chart_event(clean_chart(fig_doc, 520), "doc_type_bar_chart_click")
+        selected = get_clicked_value(event, "y")
 
-            with st.container(border=True):
-                mini_summary(doc_df, f"Document Type Drilldown: {selected}")
-
-                d1, d2 = st.columns(2)
-                with d1:
-                    vendor_split = (
-                        doc_df.groupby("Vendor Name", dropna=True)["POH"]
-                        .sum().reset_index().sort_values("POH", ascending=False).head(10)
-                    )
-                    fig = px.bar(
-                        vendor_split,
-                        x="POH",
-                        y="Vendor Name",
-                        orientation="h",
-                        text="POH",
-                        title=f"Top Vendors for {selected}",
-                    )
-                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
-                    fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-                    st.plotly_chart(fig, use_container_width=True)
-
-                with d2:
-                    mat_split = (
-                        doc_df.groupby("Short Text", dropna=True)["POH"]
-                        .sum().reset_index().sort_values("POH", ascending=False).head(10)
-                    )
-                    fig = px.bar(
-                        mat_split,
-                        x="POH",
-                        y="Short Text",
-                        orientation="h",
-                        text="POH",
-                        title=f"Top Materials for {selected}",
-                    )
-                    fig.update_layout(height=420, yaxis={"automargin": True}, margin=dict(l=10, r=80, t=50, b=40))
-                    fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-                    st.plotly_chart(fig, use_container_width=True)
-
-                detail_table(doc_df)
+        if selected:
+            selected = str(selected)
+            popup_title = f"Document Type Drilldown: {selected}"
+            popup_df = filtered_df[filtered_df["Doc Type"].astype(str) == selected]
 
     chart5, chart6 = st.columns(2)
 
     with chart5:
         st.markdown("### Delivery / Invoice Status")
-
         delivery_chart = pd.DataFrame({
             "Status": ["Delivered", "Pending Delivery", "Pending Invoice"],
             "Quantity": [
@@ -643,26 +571,26 @@ with tab1:
                 filtered_df["Still to be inv."].clip(lower=0).sum(),
             ],
         })
-
-        fig_delivery = px.bar(
-            delivery_chart,
-            x="Status",
-            y="Quantity",
-            text="Quantity",
-            hover_data={"Quantity": ":,.2f"},
+        fig_delivery = px.bar(delivery_chart, x="Status", y="Quantity", text="Quantity")
+        fig_delivery.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="outside",
+            hovertemplate="<b>%{x}</b><br>Quantity: %{y:,.2f}<extra></extra>"
         )
-        fig_delivery.update_layout(
-            height=500,
-            margin=dict(l=10, r=80, t=20, b=60),
-            xaxis_title="Status",
-            yaxis_title="Quantity",
-        )
-        fig_delivery.update_traces(texttemplate="%{text:,.2f}", textposition="outside")
-        st.plotly_chart(fig_delivery, use_container_width=True)
+        fig_delivery.update_layout(xaxis_title="Status", yaxis_title="Quantity")
+        event = chart_event(clean_chart(fig_delivery, 500), "delivery_chart_click")
+        selected = get_clicked_value(event, "x")
+        if selected:
+            if selected == "Delivered":
+                popup_df = filtered_df[filtered_df["GR Qty"] > 0]
+            elif selected == "Pending Delivery":
+                popup_df = filtered_df[filtered_df["Still to be del."] > 0]
+            else:
+                popup_df = filtered_df[filtered_df["Still to be inv."] > 0]
+            popup_title = f"Status Drilldown: {selected}"
 
     with chart6:
         st.markdown("### Monthly PO Value Trend")
-
         trend_df = filtered_df.copy()
         trend_df["Item Doc Date"] = pd.to_datetime(trend_df["Item Doc Date"], errors="coerce")
         trend_df = (
@@ -672,24 +600,137 @@ with tab1:
             .reset_index()
         )
         trend_df["Month"] = trend_df["Item Doc Date"].astype(str)
+        fig_trend = px.line(trend_df, x="Month", y="PO_Value", markers=True, text="PO_Value", custom_data=["PO_Count"])
+        fig_trend.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="top center",
+            hovertemplate="<b>%{x}</b><br>PO Value: INR %{y:,.2f}<br>PO Count: %{customdata[0]:,.0f}<extra></extra>"
+        )
+        fig_trend.update_layout(xaxis_title="Month", yaxis_title="PO Value")
+        event = chart_event(clean_chart(fig_trend, 500), "trend_chart_click")
+        selected = get_clicked_value(event, "x")
+        if selected:
+            temp = filtered_df.copy()
+            temp["Item Doc Date"] = pd.to_datetime(temp["Item Doc Date"], errors="coerce")
+            popup_df = temp[temp["Item Doc Date"].dt.to_period("M").astype(str) == str(selected)]
+            popup_title = f"Monthly Drilldown: {selected}"
 
-        fig_trend = px.line(
-            trend_df,
-            x="Month",
-            y="PO_Value",
-            markers=True,
-            hover_data={
-                "PO_Value": ":,.2f",
-                "PO_Count": ":,.0f",
-            },
+    st.divider()
+    st.markdown('<div class="section-title">Additional Procurement Insights</div>', unsafe_allow_html=True)
+
+    chart7, chart8 = st.columns(2)
+
+    with chart7:
+        st.markdown("### Top Vendors by Pending Delivery")
+        pending_vendor = (
+            filtered_df.groupby("Vendor Name", dropna=True)
+            .agg(Pending_Delivery=("Still to be del.", "sum"), PO_Value=("POH", "sum"), PO_Count=("PurchDoc", "nunique"))
+            .reset_index()
         )
-        fig_trend.update_layout(
-            height=500,
-            margin=dict(l=10, r=50, t=20, b=60),
-            xaxis_title="Month",
-            yaxis_title="PO Value",
+        pending_vendor = pending_vendor[pending_vendor["Pending_Delivery"] > 0].sort_values("Pending_Delivery", ascending=False).head(15)
+        fig = px.bar(pending_vendor, x="Pending_Delivery", y="Vendor Name", orientation="h", text="Pending_Delivery", custom_data=["PO_Value", "PO_Count"])
+        fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside", hovertemplate="<b>%{y}</b><br>Pending Delivery: %{x:,.2f}<br>PO Value: INR %{customdata[0]:,.2f}<br>PO Count: %{customdata[1]:,.0f}<extra></extra>")
+        fig.update_layout(yaxis={"automargin": True}, xaxis_title="Pending Delivery", yaxis_title="Vendor Name")
+        event = chart_event(clean_chart(fig, 560), "pending_vendor_click")
+        selected = get_clicked_value(event, "y")
+        if selected:
+            popup_title = f"Pending Delivery Vendor Drilldown: {selected}"
+            popup_df = filtered_df[(filtered_df["Vendor Name"].astype(str) == str(selected)) & (filtered_df["Still to be del."] > 0)]
+
+    with chart8:
+        st.markdown("### Top Materials by Pending Invoice")
+        pending_material = (
+            filtered_df.groupby("Short Text", dropna=True)
+            .agg(Pending_Invoice=("Still to be inv.", "sum"), PO_Value=("POH", "sum"), PO_Count=("PurchDoc", "nunique"))
+            .reset_index()
         )
-        st.plotly_chart(fig_trend, use_container_width=True)
+        pending_material = pending_material[pending_material["Pending_Invoice"] > 0].sort_values("Pending_Invoice", ascending=False).head(15)
+        fig = px.bar(pending_material, x="Pending_Invoice", y="Short Text", orientation="h", text="Pending_Invoice", custom_data=["PO_Value", "PO_Count"])
+        fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside", hovertemplate="<b>%{y}</b><br>Pending Invoice: %{x:,.2f}<br>PO Value: INR %{customdata[0]:,.2f}<br>PO Count: %{customdata[1]:,.0f}<extra></extra>")
+        fig.update_layout(yaxis={"automargin": True}, xaxis_title="Pending Invoice", yaxis_title="Material / Short Text")
+        event = chart_event(clean_chart(fig, 560), "pending_material_click")
+        selected = get_clicked_value(event, "y")
+        if selected:
+            popup_title = f"Pending Invoice Material Drilldown: {selected}"
+            popup_df = filtered_df[(filtered_df["Short Text"].astype(str) == str(selected)) & (filtered_df["Still to be inv."] > 0)]
+
+    chart9, chart10 = st.columns(2)
+
+    with chart9:
+        st.markdown("### Company Wise PO Value")
+        company_chart = (
+            filtered_df.groupby("Company Name", dropna=True)
+            .agg(Total_PO_Value=("POH", "sum"), PO_Count=("PurchDoc", "nunique"))
+            .reset_index()
+            .sort_values("Total_PO_Value", ascending=False)
+            .head(15)
+        )
+        fig = px.bar(company_chart, x="Total_PO_Value", y="Company Name", orientation="h", text="Total_PO_Value", custom_data=["PO_Count"])
+        fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside", hovertemplate="<b>%{y}</b><br>PO Value: INR %{x:,.2f}<br>PO Count: %{customdata[0]:,.0f}<extra></extra>")
+        fig.update_layout(yaxis={"automargin": True}, xaxis_title="PO Value", yaxis_title="Company Name")
+        event = chart_event(clean_chart(fig, 540), "company_chart_click")
+        selected = get_clicked_value(event, "y")
+        if selected:
+            popup_title = f"Company Drilldown: {selected}"
+            popup_df = filtered_df[filtered_df["Company Name"].astype(str) == str(selected)]
+
+    with chart10:
+        st.markdown("### Material Group Spend")
+        group_chart = (
+            filtered_df.groupby("Matl Group", dropna=True)
+            .agg(Total_Spend=("POH", "sum"), PO_Count=("PurchDoc", "nunique"))
+            .reset_index()
+            .sort_values("Total_Spend", ascending=False)
+            .head(15)
+        )
+        fig = px.bar(group_chart, x="Total_Spend", y="Matl Group", orientation="h", text="Total_Spend", custom_data=["PO_Count"])
+        fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside", hovertemplate="<b>%{y}</b><br>Total Spend: INR %{x:,.2f}<br>PO Count: %{customdata[0]:,.0f}<extra></extra>")
+        fig.update_layout(yaxis={"automargin": True}, xaxis_title="Spend", yaxis_title="Material Group")
+        event = chart_event(clean_chart(fig, 540), "matl_group_chart_click")
+        selected = get_clicked_value(event, "y")
+        if selected:
+            popup_title = f"Material Group Drilldown: {selected}"
+            popup_df = filtered_df[filtered_df["Matl Group"].astype(str) == str(selected)]
+
+    chart11, chart12 = st.columns(2)
+
+    with chart11:
+        st.markdown("### Vendor Count by Plant")
+        vendor_count_chart = (
+            filtered_df.groupby("Plant", dropna=True)
+            .agg(Vendor_Count=("Vendor/Supplying plant", "nunique"), PO_Value=("POH", "sum"))
+            .reset_index()
+            .sort_values("Vendor_Count", ascending=False)
+        )
+        fig = px.bar(vendor_count_chart, x="Plant", y="Vendor_Count", text="Vendor_Count", custom_data=["PO_Value"])
+        fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", hovertemplate="<b>Plant %{x}</b><br>Vendor Count: %{y:,.0f}<br>PO Value: INR %{customdata[0]:,.2f}<extra></extra>")
+        fig.update_layout(xaxis_tickangle=-45, xaxis_title="Plant", yaxis_title="Vendor Count")
+        event = chart_event(clean_chart(fig, 500), "vendor_count_plant_click")
+        selected = get_clicked_value(event, "x")
+        if selected:
+            popup_title = f"Vendor Count Plant Drilldown: {selected}"
+            popup_df = filtered_df[filtered_df["Plant"].astype(str) == str(selected)]
+
+    with chart12:
+        st.markdown("### PO Quantity vs GR Quantity by Plant")
+        qty_chart = (
+            filtered_df.groupby("Plant", dropna=True)
+            .agg(PO_Quantity=("PO Quantity Sto", "sum"), GR_Quantity=("GR Qty", "sum"), PO_Value=("POH", "sum"))
+            .reset_index()
+            .sort_values("PO_Quantity", ascending=False)
+            .head(15)
+        )
+        fig = px.bar(qty_chart, x="Plant", y=["PO_Quantity", "GR_Quantity"], barmode="group")
+        fig.update_traces(hovertemplate="<b>Plant %{x}</b><br>%{fullData.name}: %{y:,.2f}<extra></extra>")
+        fig.update_layout(height=500, dragmode=False, hovermode="closest", clickmode="event", xaxis_tickangle=-45, xaxis_title="Plant", yaxis_title="Quantity", margin=dict(l=10, r=60, t=25, b=80))
+        event = chart_event(fig, "qty_compare_click")
+        selected = get_clicked_value(event, "x")
+        if selected:
+            popup_title = f"PO vs GR Quantity Drilldown: {selected}"
+            popup_df = filtered_df[filtered_df["Plant"].astype(str) == str(selected)]
+
+    if popup_title and popup_df is not None:
+        show_popup(popup_title, popup_df)
 
     st.divider()
     st.markdown('<div class="section-title">Detailed Data Preview</div>', unsafe_allow_html=True)
@@ -703,6 +744,7 @@ with tab1:
         "text/csv",
         use_container_width=True
     )
+
 with tab2:
     st.subheader("Filter & Explore Data")
     df = load_data()
