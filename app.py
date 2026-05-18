@@ -221,14 +221,17 @@ def clean_chart(fig, height=520):
     )
     return fig
 
+def mark_active_chart(chart_key):
+    st.session_state.me2j_active_chart = chart_key
+
 def chart_event(fig, key):
-    # on_select is used only for click drilldown. selection_mode is intentionally not passed,
-    # because selection_mode creates the 4-side drag cursor in Plotly.
+    # Callback marks only the chart that was clicked, so old selections from other charts
+    # will not keep opening the previous drilldown.
     return st.plotly_chart(
         fig,
         use_container_width=True,
         key=key,
-        on_select="rerun",
+        on_select=lambda chart_key=key: mark_active_chart(chart_key),
         config=PLOTLY_CONFIG,
     )
 
@@ -388,32 +391,60 @@ with tab1:
     if selected_matl_group != "All":
         filtered_df = filtered_df[filtered_df["Matl Group"].astype(str) == selected_matl_group]
 
+    popup_title = None
+    popup_df = None
+
     k1, k2, k3, k4 = st.columns(4)
     with k1:
         kpi("Total POs", num_fmt(filtered_df["PurchDoc"].nunique()))
+        if st.button("View details", key="kpi_total_pos", use_container_width=True):
+            popup_title = "Total POs Drilldown"
+            popup_df = filtered_df.copy()
     with k2:
         kpi("Total Vendors", num_fmt(filtered_df["Vendor/Supplying plant"].nunique()))
+        if st.button("View details", key="kpi_total_vendors", use_container_width=True):
+            popup_title = "Total Vendors Drilldown"
+            popup_df = filtered_df.copy()
     with k3:
         kpi("Total PO Value", money_fmt(filtered_df["POH"].sum()), is_amount=True)
+        if st.button("View details", key="kpi_total_po_value", use_container_width=True):
+            popup_title = "Total PO Value Drilldown"
+            popup_df = filtered_df[filtered_df["POH"] > 0].copy()
     with k4:
         kpi("Pending Delivery Qty", num_fmt(filtered_df["Still to be del."].clip(lower=0).sum()))
+        if st.button("View details", key="kpi_pending_delivery", use_container_width=True):
+            popup_title = "Pending Delivery Drilldown"
+            popup_df = filtered_df[filtered_df["Still to be del."] > 0].copy()
 
     k5, k6, k7, k8 = st.columns(4)
     with k5:
         kpi("Total PO Quantity", num_fmt(filtered_df["PO Quantity Sto"].sum()))
+        if st.button("View details", key="kpi_total_po_qty", use_container_width=True):
+            popup_title = "Total PO Quantity Drilldown"
+            popup_df = filtered_df[filtered_df["PO Quantity Sto"] > 0].copy()
     with k6:
         kpi("GR Quantity", num_fmt(filtered_df["GR Qty"].sum()))
+        if st.button("View details", key="kpi_gr_qty", use_container_width=True):
+            popup_title = "GR Quantity Drilldown"
+            popup_df = filtered_df[filtered_df["GR Qty"] > 0].copy()
     with k7:
         kpi("Pending Invoice Qty", num_fmt(filtered_df["Still to be inv."].clip(lower=0).sum()))
+        if st.button("View details", key="kpi_pending_invoice", use_container_width=True):
+            popup_title = "Pending Invoice Drilldown"
+            popup_df = filtered_df[filtered_df["Still to be inv."] > 0].copy()
     with k8:
         avg_po = filtered_df["POH"].sum() / filtered_df["PurchDoc"].nunique() if filtered_df["PurchDoc"].nunique() else 0
         kpi("Average PO Value", money_fmt(avg_po), is_amount=True)
+        if st.button("View details", key="kpi_avg_po_value", use_container_width=True):
+            popup_title = "Average PO Value Drilldown"
+            popup_df = filtered_df[filtered_df["POH"] > 0].copy()
 
     st.caption(f"Filtered Records: {len(filtered_df):,}")
-    st.divider()
 
-    popup_title = None
-    popup_df = None
+    if popup_title and popup_df is not None:
+        show_popup(popup_title, popup_df)
+
+    st.divider()
 
     # Pre-aggregations
     vendor_chart = (
@@ -462,7 +493,7 @@ with tab1:
         )
         fig_vendor.update_layout(yaxis={"automargin": True}, xaxis_title="PO Value", yaxis_title="Vendor Name")
         event = chart_event(clean_chart(fig_vendor, 620), "vendor_chart_click")
-        selected = get_clicked_value(event, "y")
+        selected = get_clicked_value(event, "y") if st.session_state.get("me2j_active_chart") == "vendor_chart_click" else None
         if selected:
             popup_title = f"Vendor Drilldown: {selected}"
             popup_df = filtered_df[filtered_df["Vendor Name"].astype(str) == str(selected)]
@@ -484,7 +515,7 @@ with tab1:
         )
         fig_material.update_layout(yaxis={"automargin": True}, xaxis_title="PO Value", yaxis_title="Material / Short Text")
         event = chart_event(clean_chart(fig_material, 620), "material_chart_click")
-        selected = get_clicked_value(event, "y")
+        selected = get_clicked_value(event, "y") if st.session_state.get("me2j_active_chart") == "material_chart_click" else None
         if selected:
             popup_title = f"Material Drilldown: {selected}"
             popup_df = filtered_df[filtered_df["Short Text"].astype(str) == str(selected)]
@@ -513,7 +544,7 @@ with tab1:
         )
         fig_plant.update_layout(xaxis_tickangle=-45, xaxis_title="Plant", yaxis_title="Total Value")
         event = chart_event(clean_chart(fig_plant, 520), "plant_chart_click")
-        selected = get_clicked_value(event, "x")
+        selected = get_clicked_value(event, "x") if st.session_state.get("me2j_active_chart") == "plant_chart_click" else None
         if selected:
             popup_title = f"Plant Drilldown: {selected}"
             popup_df = filtered_df[filtered_df["Plant"].astype(str) == str(selected)]
@@ -552,7 +583,7 @@ with tab1:
         )
 
         event = chart_event(clean_chart(fig_doc, 520), "doc_type_bar_chart_click")
-        selected = get_clicked_value(event, "y")
+        selected = get_clicked_value(event, "y") if st.session_state.get("me2j_active_chart") == "doc_type_bar_chart_click" else None
 
         if selected:
             selected = str(selected)
@@ -579,7 +610,7 @@ with tab1:
         )
         fig_delivery.update_layout(xaxis_title="Status", yaxis_title="Quantity")
         event = chart_event(clean_chart(fig_delivery, 500), "delivery_chart_click")
-        selected = get_clicked_value(event, "x")
+        selected = get_clicked_value(event, "x") if st.session_state.get("me2j_active_chart") == "delivery_chart_click" else None
         if selected:
             if selected == "Delivered":
                 popup_df = filtered_df[filtered_df["GR Qty"] > 0]
@@ -608,7 +639,7 @@ with tab1:
         )
         fig_trend.update_layout(xaxis_title="Month", yaxis_title="PO Value")
         event = chart_event(clean_chart(fig_trend, 500), "trend_chart_click")
-        selected = get_clicked_value(event, "x")
+        selected = get_clicked_value(event, "x") if st.session_state.get("me2j_active_chart") == "trend_chart_click" else None
         if selected:
             temp = filtered_df.copy()
             temp["Item Doc Date"] = pd.to_datetime(temp["Item Doc Date"], errors="coerce")
@@ -632,7 +663,7 @@ with tab1:
         fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside", hovertemplate="<b>%{y}</b><br>Pending Delivery: %{x:,.2f}<br>PO Value: INR %{customdata[0]:,.2f}<br>PO Count: %{customdata[1]:,.0f}<extra></extra>")
         fig.update_layout(yaxis={"automargin": True}, xaxis_title="Pending Delivery", yaxis_title="Vendor Name")
         event = chart_event(clean_chart(fig, 560), "pending_vendor_click")
-        selected = get_clicked_value(event, "y")
+        selected = get_clicked_value(event, "y") if st.session_state.get("me2j_active_chart") == "pending_vendor_click" else None
         if selected:
             popup_title = f"Pending Delivery Vendor Drilldown: {selected}"
             popup_df = filtered_df[(filtered_df["Vendor Name"].astype(str) == str(selected)) & (filtered_df["Still to be del."] > 0)]
@@ -649,7 +680,7 @@ with tab1:
         fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside", hovertemplate="<b>%{y}</b><br>Pending Invoice: %{x:,.2f}<br>PO Value: INR %{customdata[0]:,.2f}<br>PO Count: %{customdata[1]:,.0f}<extra></extra>")
         fig.update_layout(yaxis={"automargin": True}, xaxis_title="Pending Invoice", yaxis_title="Material / Short Text")
         event = chart_event(clean_chart(fig, 560), "pending_material_click")
-        selected = get_clicked_value(event, "y")
+        selected = get_clicked_value(event, "y") if st.session_state.get("me2j_active_chart") == "pending_material_click" else None
         if selected:
             popup_title = f"Pending Invoice Material Drilldown: {selected}"
             popup_df = filtered_df[(filtered_df["Short Text"].astype(str) == str(selected)) & (filtered_df["Still to be inv."] > 0)]
@@ -669,7 +700,7 @@ with tab1:
         fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside", hovertemplate="<b>%{y}</b><br>PO Value: INR %{x:,.2f}<br>PO Count: %{customdata[0]:,.0f}<extra></extra>")
         fig.update_layout(yaxis={"automargin": True}, xaxis_title="PO Value", yaxis_title="Company Name")
         event = chart_event(clean_chart(fig, 540), "company_chart_click")
-        selected = get_clicked_value(event, "y")
+        selected = get_clicked_value(event, "y") if st.session_state.get("me2j_active_chart") == "company_chart_click" else None
         if selected:
             popup_title = f"Company Drilldown: {selected}"
             popup_df = filtered_df[filtered_df["Company Name"].astype(str) == str(selected)]
@@ -687,7 +718,7 @@ with tab1:
         fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside", hovertemplate="<b>%{y}</b><br>Total Spend: INR %{x:,.2f}<br>PO Count: %{customdata[0]:,.0f}<extra></extra>")
         fig.update_layout(yaxis={"automargin": True}, xaxis_title="Spend", yaxis_title="Material Group")
         event = chart_event(clean_chart(fig, 540), "matl_group_chart_click")
-        selected = get_clicked_value(event, "y")
+        selected = get_clicked_value(event, "y") if st.session_state.get("me2j_active_chart") == "matl_group_chart_click" else None
         if selected:
             popup_title = f"Material Group Drilldown: {selected}"
             popup_df = filtered_df[filtered_df["Matl Group"].astype(str) == str(selected)]
@@ -706,7 +737,7 @@ with tab1:
         fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", hovertemplate="<b>Plant %{x}</b><br>Vendor Count: %{y:,.0f}<br>PO Value: INR %{customdata[0]:,.2f}<extra></extra>")
         fig.update_layout(xaxis_tickangle=-45, xaxis_title="Plant", yaxis_title="Vendor Count")
         event = chart_event(clean_chart(fig, 500), "vendor_count_plant_click")
-        selected = get_clicked_value(event, "x")
+        selected = get_clicked_value(event, "x") if st.session_state.get("me2j_active_chart") == "vendor_count_plant_click" else None
         if selected:
             popup_title = f"Vendor Count Plant Drilldown: {selected}"
             popup_df = filtered_df[filtered_df["Plant"].astype(str) == str(selected)]
@@ -724,7 +755,7 @@ with tab1:
         fig.update_traces(hovertemplate="<b>Plant %{x}</b><br>%{fullData.name}: %{y:,.2f}<extra></extra>")
         fig.update_layout(height=500, dragmode=False, hovermode="closest", clickmode="event", xaxis_tickangle=-45, xaxis_title="Plant", yaxis_title="Quantity", margin=dict(l=10, r=60, t=25, b=80))
         event = chart_event(fig, "qty_compare_click")
-        selected = get_clicked_value(event, "x")
+        selected = get_clicked_value(event, "x") if st.session_state.get("me2j_active_chart") == "qty_compare_click" else None
         if selected:
             popup_title = f"PO vs GR Quantity Drilldown: {selected}"
             popup_df = filtered_df[filtered_df["Plant"].astype(str) == str(selected)]
