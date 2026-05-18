@@ -87,6 +87,35 @@ st.markdown("""
 }
 .small-note {color:#6B7280; font-size:13px;}
 div[data-testid="stDataFrame"] {width: 100%;}
+.stPlotlyChart,
+.stPlotlyChart *,
+.js-plotly-plot,
+.js-plotly-plot *,
+.plot-container,
+.plot-container *,
+.svg-container,
+.svg-container *,
+.main-svg,
+.main-svg *,
+.cartesianlayer,
+.cartesianlayer *,
+.barlayer,
+.barlayer *,
+.scatterlayer,
+.scatterlayer *,
+.nsewdrag,
+.drag,
+.draglayer,
+.draglayer *,
+.zoomlayer,
+.cursor-crosshair,
+.cursor-move,
+.cursor-pointer,
+.cursor-ew-resize,
+.cursor-ns-resize {
+    cursor: default !important;
+}
+.modebar {display: none !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -198,6 +227,74 @@ def plot_horizontal_bar(df, x, y, title, hover_data=None, text=None, height=650)
     fig.update_traces(texttemplate="%{text:,.2f}", textposition="outside", cliponaxis=False)
     return fig
 
+
+# ------------------------------------------------------------
+# Plotly click / popup helpers
+# ------------------------------------------------------------
+PLOTLY_CONFIG = {
+    "displayModeBar": False,
+    "displaylogo": False,
+    "scrollZoom": False,
+    "doubleClick": False,
+    "responsive": True,
+}
+
+def clean_chart(fig, height=560):
+    fig.update_layout(
+        height=height,
+        dragmode=False,
+        hovermode="closest",
+        clickmode="event",
+        margin=dict(l=10, r=110, t=55, b=55),
+    )
+    fig.update_traces(
+        selected=dict(marker=dict(opacity=1)),
+        unselected=dict(marker=dict(opacity=0.95)),
+    )
+    return fig
+
+def chart_event(fig, key):
+    return st.plotly_chart(
+        fig,
+        use_container_width=True,
+        key=key,
+        on_select="rerun",
+        config=PLOTLY_CONFIG,
+    )
+
+def get_clicked_value(event_result, preferred=None):
+    try:
+        points = event_result.selection.points
+        if points:
+            p = points[0]
+            if preferred and preferred in p and p.get(preferred) is not None:
+                return p.get(preferred)
+            for alt in ["y", "x", "label", "customdata", "point_name", "name"]:
+                if alt in p and p.get(alt) is not None:
+                    val = p.get(alt)
+                    if isinstance(val, (list, tuple)) and val:
+                        return val[0]
+                    return val
+    except Exception:
+        return None
+    return None
+
+@st.dialog("Drilldown Details", width="large")
+def show_drilldown_popup(title, df):
+    st.markdown(f"### {title}")
+    mini_summary(df, title)
+    st.markdown("#### Detailed Records")
+    detail_table(df.sort_values("TOTAL_VALUE", ascending=False), rows=500)
+
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download Drilldown Records",
+        csv,
+        "MBBS_DRILLDOWN_RECORDS.csv",
+        "text/csv",
+        use_container_width=True,
+    )
+
 # ------------------------------------------------------------
 # Sidebar
 # ------------------------------------------------------------
@@ -262,17 +359,52 @@ with tab1:
     if selected_bun != "All":
         filtered_df = filtered_df[filtered_df["BUN"].astype(str) == selected_bun]
 
+    popup_title = None
+    popup_df = None
+
     k1, k2, k3, k4 = st.columns(4)
-    with k1: kpi("Total Materials", num_fmt(filtered_df["MATERIAL"].nunique()))
-    with k2: kpi("WBS Elements", num_fmt(filtered_df["WBS_ELEMENT"].nunique()))
-    with k3: kpi("Inventory Value", money_fmt(filtered_df["TOTAL_VALUE"].sum()), is_amount=True)
-    with k4: kpi("Stock Quantity", num_fmt(filtered_df["TOTAL_STOCK"].sum(), 3))
+    with k1:
+        kpi("Total Materials", num_fmt(filtered_df["MATERIAL"].nunique()))
+        if st.button("View details", key="kpi_total_materials", use_container_width=True):
+            popup_title = "Total Materials Drilldown"
+            popup_df = filtered_df.copy()
+    with k2:
+        kpi("WBS Elements", num_fmt(filtered_df["WBS_ELEMENT"].nunique()))
+        if st.button("View details", key="kpi_wbs_elements", use_container_width=True):
+            popup_title = "WBS Elements Drilldown"
+            popup_df = filtered_df.copy()
+    with k3:
+        kpi("Inventory Value", money_fmt(filtered_df["TOTAL_VALUE"].sum()), is_amount=True)
+        if st.button("View details", key="kpi_inventory_value", use_container_width=True):
+            popup_title = "Inventory Value Drilldown"
+            popup_df = filtered_df[filtered_df["TOTAL_VALUE"] > 0].copy()
+    with k4:
+        kpi("Stock Quantity", num_fmt(filtered_df["TOTAL_STOCK"].sum(), 3))
+        if st.button("View details", key="kpi_stock_qty", use_container_width=True):
+            popup_title = "Stock Quantity Drilldown"
+            popup_df = filtered_df[filtered_df["TOTAL_STOCK"] != 0].copy()
 
     k5, k6, k7, k8 = st.columns(4)
-    with k5: kpi("Records", num_fmt(len(filtered_df)))
-    with k6: kpi("Positive Stock Items", num_fmt((filtered_df["TOTAL_STOCK"] > 0).sum()))
-    with k7: kpi("Negative Stock Items", num_fmt((filtered_df["TOTAL_STOCK"] < 0).sum()))
-    with k8: kpi("High Value Items", num_fmt((filtered_df["TOTAL_VALUE"] >= 10000000).sum()))
+    with k5:
+        kpi("Records", num_fmt(len(filtered_df)))
+        if st.button("View details", key="kpi_records", use_container_width=True):
+            popup_title = "All Records Drilldown"
+            popup_df = filtered_df.copy()
+    with k6:
+        kpi("Positive Stock Items", num_fmt((filtered_df["TOTAL_STOCK"] > 0).sum()))
+        if st.button("View details", key="kpi_positive_stock", use_container_width=True):
+            popup_title = "Positive Stock Items Drilldown"
+            popup_df = filtered_df[filtered_df["TOTAL_STOCK"] > 0].copy()
+    with k7:
+        kpi("Negative Stock Items", num_fmt((filtered_df["TOTAL_STOCK"] < 0).sum()))
+        if st.button("View details", key="kpi_negative_stock", use_container_width=True):
+            popup_title = "Negative Stock Items Drilldown"
+            popup_df = filtered_df[filtered_df["TOTAL_STOCK"] < 0].copy()
+    with k8:
+        kpi("High Value Items", num_fmt((filtered_df["TOTAL_VALUE"] >= 10000000).sum()))
+        if st.button("View details", key="kpi_high_value", use_container_width=True):
+            popup_title = "High Value Items Drilldown"
+            popup_df = filtered_df[filtered_df["TOTAL_VALUE"] >= 10000000].copy()
 
     st.caption(f"Filtered Records: {len(filtered_df):,} of {len(df_all):,}")
     st.divider()
@@ -318,21 +450,51 @@ with tab1:
 
     with c1:
         st.markdown("### WBS Value Concentration")
-        fig_wbs = plot_horizontal_bar(
-            wbs_chart, "TOTAL_VALUE", "WBS_ELEMENT", "Top WBS Elements by Inventory Value",
-            hover_data={"TOTAL_VALUE": ":,.2f", "TOTAL_STOCK": ":,.3f", "MATERIAL_COUNT": ":,.0f", "RECORD_COUNT": ":,.0f"},
-            height=700
+        fig_wbs = px.bar(
+            wbs_chart,
+            x="TOTAL_VALUE",
+            y="WBS_ELEMENT",
+            orientation="h",
+            text="TOTAL_VALUE",
+            custom_data=["TOTAL_STOCK", "MATERIAL_COUNT", "RECORD_COUNT"],
+            title="Top WBS Elements by Inventory Value",
         )
-        wbs_event = st.plotly_chart(fig_wbs, use_container_width=True, key="wbs_chart", on_select="rerun", selection_mode="points")
+        fig_wbs.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>%{y}</b><br>Total Value: INR %{x:,.2f}<br>Total Stock: %{customdata[0]:,.3f}<br>Material Count: %{customdata[1]:,.0f}<br>Record Count: %{customdata[2]:,.0f}<extra></extra>"
+        )
+        fig_wbs.update_layout(yaxis={"automargin": True, "categoryorder": "total ascending"}, xaxis_title="Inventory Value", yaxis_title="WBS Element")
+        wbs_event = chart_event(clean_chart(fig_wbs, 700), "wbs_chart_popup")
+        clicked_wbs = get_clicked_value(wbs_event, "y")
+        if clicked_wbs:
+            popup_title = f"WBS Element Drilldown: {clicked_wbs}"
+            popup_df = filtered_df[filtered_df["WBS_ELEMENT"].astype(str) == str(clicked_wbs)].copy()
 
     with c2:
         st.markdown("### Top Materials by Inventory Value")
-        fig_mat = plot_horizontal_bar(
-            material_chart, "TOTAL_VALUE", "MATERIAL_DISPLAY", "Top Materials by Inventory Value",
-            hover_data={"MATERIAL": True, "TOTAL_VALUE": ":,.2f", "TOTAL_STOCK": ":,.3f", "WBS_COUNT": ":,.0f", "RECORD_COUNT": ":,.0f"},
-            height=700
+        fig_mat = px.bar(
+            material_chart,
+            x="TOTAL_VALUE",
+            y="MATERIAL_DISPLAY",
+            orientation="h",
+            text="TOTAL_VALUE",
+            custom_data=["MATERIAL", "TOTAL_STOCK", "WBS_COUNT", "RECORD_COUNT"],
+            title="Top Materials by Inventory Value",
         )
-        mat_event = st.plotly_chart(fig_mat, use_container_width=True, key="material_chart", on_select="rerun", selection_mode="points")
+        fig_mat.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>%{y}</b><br>Material: %{customdata[0]}<br>Total Value: INR %{x:,.2f}<br>Total Stock: %{customdata[1]:,.3f}<br>WBS Count: %{customdata[2]:,.0f}<br>Record Count: %{customdata[3]:,.0f}<extra></extra>"
+        )
+        fig_mat.update_layout(yaxis={"automargin": True, "categoryorder": "total ascending"}, xaxis_title="Inventory Value", yaxis_title="Material")
+        mat_event = chart_event(clean_chart(fig_mat, 700), "material_chart_popup")
+        clicked_mat = get_clicked_value(mat_event, "y")
+        if clicked_mat:
+            popup_title = f"Material Drilldown: {clicked_mat}"
+            popup_df = filtered_df[filtered_df["MATERIAL_DISPLAY"].astype(str) == str(clicked_mat)].copy()
 
     # Row 2
     c3, c4 = st.columns(2)
@@ -340,24 +502,50 @@ with tab1:
     with c3:
         st.markdown("### Valuation Area Contribution")
         fig_area = px.bar(
-            valarea_chart, x="VAL_AREA", y="TOTAL_VALUE", text="TOTAL_VALUE",
-            hover_data={"TOTAL_VALUE": ":,.2f", "TOTAL_STOCK": ":,.3f", "MATERIAL_COUNT": ":,.0f"},
+            valarea_chart,
+            x="VAL_AREA",
+            y="TOTAL_VALUE",
+            text="TOTAL_VALUE",
+            custom_data=["TOTAL_STOCK", "MATERIAL_COUNT"],
             title="Valuation Area Wise Inventory"
         )
-        fig_area.update_layout(height=560, margin=dict(l=10, r=100, t=55, b=80), xaxis_tickangle=-45)
-        fig_area.update_traces(texttemplate="%{text:,.2f}", textposition="outside", cliponaxis=False)
-        area_event = st.plotly_chart(fig_area, use_container_width=True, key="area_chart", on_select="rerun", selection_mode="points")
+        fig_area.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>Valuation Area %{x}</b><br>Total Value: INR %{y:,.2f}<br>Total Stock: %{customdata[0]:,.3f}<br>Material Count: %{customdata[1]:,.0f}<extra></extra>"
+        )
+        fig_area.update_layout(xaxis_tickangle=-45, xaxis_title="Valuation Area", yaxis_title="Inventory Value")
+        area_event = chart_event(clean_chart(fig_area, 560), "area_chart_popup")
+        clicked_area = get_clicked_value(area_event, "x")
+        if clicked_area is not None:
+            popup_title = f"Valuation Area Drilldown: {clicked_area}"
+            popup_df = filtered_df[filtered_df["VAL_AREA"].astype(str) == str(clicked_area)].copy()
 
     with c4:
         st.markdown("### Valuation Type Split")
-        fig_vt = px.pie(
-            valtype_chart, names="VAL_TYPE", values="TOTAL_VALUE", hole=0.45,
-            hover_data={"TOTAL_STOCK": ":,.3f", "RECORD_COUNT": ":,.0f"},
+        # Donut/pie click is unstable in Streamlit, so using bar chart for reliable drilldown.
+        fig_vt = px.bar(
+            valtype_chart,
+            x="TOTAL_VALUE",
+            y="VAL_TYPE",
+            orientation="h",
+            text="TOTAL_VALUE",
+            custom_data=["TOTAL_STOCK", "RECORD_COUNT"],
             title="Valuation Type Split by Value"
         )
-        fig_vt.update_traces(textposition="inside", textinfo="percent+label")
-        fig_vt.update_layout(height=560)
-        vt_event = st.plotly_chart(fig_vt, use_container_width=True, key="vt_chart", on_select="rerun", selection_mode="points")
+        fig_vt.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>%{y}</b><br>Total Value: INR %{x:,.2f}<br>Total Stock: %{customdata[0]:,.3f}<br>Record Count: %{customdata[1]:,.0f}<extra></extra>"
+        )
+        fig_vt.update_layout(yaxis={"automargin": True, "categoryorder": "total ascending"}, xaxis_title="Inventory Value", yaxis_title="Valuation Type")
+        vt_event = chart_event(clean_chart(fig_vt, 560), "vt_chart_popup")
+        clicked_vt = get_clicked_value(vt_event, "y")
+        if clicked_vt:
+            popup_title = f"Valuation Type Drilldown: {clicked_vt}"
+            popup_df = filtered_df[filtered_df["VAL_TYPE"].astype(str) == str(clicked_vt)].copy()
 
     # Row 3
     c5, c6 = st.columns(2)
@@ -365,125 +553,201 @@ with tab1:
     with c5:
         st.markdown("### Unit-wise Inventory")
         fig_bun = px.bar(
-            bun_chart, x="BUN", y="TOTAL_VALUE", text="TOTAL_VALUE",
-            hover_data={"TOTAL_VALUE": ":,.2f", "TOTAL_STOCK": ":,.3f", "RECORD_COUNT": ":,.0f"},
+            bun_chart,
+            x="BUN",
+            y="TOTAL_VALUE",
+            text="TOTAL_VALUE",
+            custom_data=["TOTAL_STOCK", "RECORD_COUNT"],
             title="Unit of Measure Wise Inventory Value"
         )
-        fig_bun.update_layout(height=520, margin=dict(l=10, r=100, t=55, b=60))
-        fig_bun.update_traces(texttemplate="%{text:,.2f}", textposition="outside", cliponaxis=False)
-        bun_event = st.plotly_chart(fig_bun, use_container_width=True, key="bun_chart", on_select="rerun", selection_mode="points")
+        fig_bun.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>%{x}</b><br>Total Value: INR %{y:,.2f}<br>Total Stock: %{customdata[0]:,.3f}<br>Record Count: %{customdata[1]:,.0f}<extra></extra>"
+        )
+        fig_bun.update_layout(xaxis_title="Unit", yaxis_title="Inventory Value")
+        bun_event = chart_event(clean_chart(fig_bun, 520), "bun_chart_popup")
+        clicked_bun = get_clicked_value(bun_event, "x")
+        if clicked_bun:
+            popup_title = f"Unit Drilldown: {clicked_bun}"
+            popup_df = filtered_df[filtered_df["BUN"].astype(str) == str(clicked_bun)].copy()
 
     with c6:
         st.markdown("### Stock Quantity vs Inventory Value")
         scatter_df = filtered_df[(filtered_df["TOTAL_VALUE"] > 0) & (filtered_df["TOTAL_STOCK"] > 0)].copy().head(1000)
         fig_scatter = px.scatter(
-            scatter_df, x="TOTAL_STOCK", y="TOTAL_VALUE", size="TOTAL_VALUE",
-            hover_name="MATERIAL_DISPLAY", hover_data=["MATERIAL", "WBS_ELEMENT", "VAL_TYPE", "BUN"],
+            scatter_df,
+            x="TOTAL_STOCK",
+            y="TOTAL_VALUE",
+            size="TOTAL_VALUE",
+            hover_name="MATERIAL_DISPLAY",
+            custom_data=["MATERIAL_DISPLAY"],
+            hover_data=["MATERIAL", "WBS_ELEMENT", "VAL_TYPE", "BUN"],
             title="Material Stock vs Value Analysis"
         )
-        fig_scatter.update_layout(height=520, margin=dict(l=10, r=40, t=55, b=60))
-        st.plotly_chart(fig_scatter, use_container_width=True)
+        fig_scatter.update_traces(
+            hovertemplate="<b>%{customdata[0]}</b><br>Stock Qty: %{x:,.3f}<br>Inventory Value: INR %{y:,.2f}<extra></extra>"
+        )
+        fig_scatter.update_layout(xaxis_title="Stock Quantity", yaxis_title="Inventory Value")
+        scatter_event = chart_event(clean_chart(fig_scatter, 520), "scatter_chart_popup")
+        clicked_scatter = get_clicked_value(scatter_event, "customdata")
+        if clicked_scatter:
+            popup_title = f"Stock vs Value Drilldown: {clicked_scatter}"
+            popup_df = filtered_df[filtered_df["MATERIAL_DISPLAY"].astype(str) == str(clicked_scatter)].copy()
 
-    # Click / drilldown helper
-    def get_clicked_value(event_result, preferred=None):
-        try:
-            points = event_result.selection.points
-            if points:
-                p = points[0]
-                if preferred and preferred in p:
-                    return p[preferred]
-                return p.get("y") or p.get("x") or p.get("label")
-        except Exception:
-            return None
-        return None
+    # Row 4 - More client-facing insights
+    st.divider()
+    st.markdown('<div class="section-title">Additional Inventory Insights</div>', unsafe_allow_html=True)
 
-    clicked_wbs = get_clicked_value(wbs_event, "y")
-    clicked_mat = get_clicked_value(mat_event, "y")
-    clicked_area = get_clicked_value(area_event, "x")
-    clicked_vt = get_clicked_value(vt_event, "label")
-    clicked_bun = get_clicked_value(bun_event, "x")
+    c7, c8 = st.columns(2)
 
-    drill_label = "All Data"
-    drill_df = filtered_df.copy()
+    with c7:
+        st.markdown("### Top Materials by Stock Quantity")
+        stock_qty_chart = (
+            filtered_df.groupby(["MATERIAL", "MATERIAL_DISPLAY"], dropna=True)
+            .agg(TOTAL_STOCK=("TOTAL_STOCK", "sum"), TOTAL_VALUE=("TOTAL_VALUE", "sum"), WBS_COUNT=("WBS_ELEMENT", "nunique"))
+            .reset_index()
+            .sort_values("TOTAL_STOCK", ascending=False)
+            .head(top_n)
+        )
+        fig_stock_qty = px.bar(
+            stock_qty_chart,
+            x="TOTAL_STOCK",
+            y="MATERIAL_DISPLAY",
+            orientation="h",
+            text="TOTAL_STOCK",
+            custom_data=["MATERIAL", "TOTAL_VALUE", "WBS_COUNT"],
+            title="Top Materials by Stock Quantity"
+        )
+        fig_stock_qty.update_traces(
+            texttemplate="%{text:,.3f}",
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>%{y}</b><br>Material: %{customdata[0]}<br>Stock Qty: %{x:,.3f}<br>Total Value: INR %{customdata[1]:,.2f}<br>WBS Count: %{customdata[2]:,.0f}<extra></extra>"
+        )
+        fig_stock_qty.update_layout(yaxis={"automargin": True, "categoryorder": "total ascending"}, xaxis_title="Stock Quantity", yaxis_title="Material")
+        qty_event = chart_event(clean_chart(fig_stock_qty, 560), "stock_qty_chart_popup")
+        clicked_qty = get_clicked_value(qty_event, "y")
+        if clicked_qty:
+            popup_title = f"Stock Quantity Material Drilldown: {clicked_qty}"
+            popup_df = filtered_df[filtered_df["MATERIAL_DISPLAY"].astype(str) == str(clicked_qty)].copy()
 
-    if clicked_wbs:
-        drill_label = f"WBS Element: {clicked_wbs}"
-        drill_df = drill_df[drill_df["WBS_ELEMENT"].astype(str) == str(clicked_wbs)]
-    elif clicked_mat:
-        drill_label = f"Material: {clicked_mat}"
-        drill_df = drill_df[drill_df["MATERIAL_DISPLAY"].astype(str) == str(clicked_mat)]
-    elif clicked_area:
-        drill_label = f"Valuation Area: {clicked_area}"
-        drill_df = drill_df[drill_df["VAL_AREA"].astype(str) == str(clicked_area)]
-    elif clicked_vt:
-        drill_label = f"Valuation Type: {clicked_vt}"
-        drill_df = drill_df[drill_df["VAL_TYPE"].astype(str) == str(clicked_vt)]
-    elif clicked_bun:
-        drill_label = f"Unit: {clicked_bun}"
-        drill_df = drill_df[drill_df["BUN"].astype(str) == str(clicked_bun)]
+    with c8:
+        st.markdown("### High Value Materials")
+        high_value_chart = (
+            filtered_df[filtered_df["TOTAL_VALUE"] >= 10000000]
+            .groupby(["MATERIAL", "MATERIAL_DISPLAY"], dropna=True)
+            .agg(TOTAL_VALUE=("TOTAL_VALUE", "sum"), TOTAL_STOCK=("TOTAL_STOCK", "sum"), WBS_COUNT=("WBS_ELEMENT", "nunique"))
+            .reset_index()
+            .sort_values("TOTAL_VALUE", ascending=False)
+            .head(top_n)
+        )
+        fig_high = px.bar(
+            high_value_chart,
+            x="TOTAL_VALUE",
+            y="MATERIAL_DISPLAY",
+            orientation="h",
+            text="TOTAL_VALUE",
+            custom_data=["MATERIAL", "TOTAL_STOCK", "WBS_COUNT"],
+            title="Materials Above 1 Crore Inventory Value"
+        )
+        fig_high.update_traces(
+            texttemplate="%{text:,.2f}",
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>%{y}</b><br>Material: %{customdata[0]}<br>Total Value: INR %{x:,.2f}<br>Total Stock: %{customdata[1]:,.3f}<br>WBS Count: %{customdata[2]:,.0f}<extra></extra>"
+        )
+        fig_high.update_layout(yaxis={"automargin": True, "categoryorder": "total ascending"}, xaxis_title="Inventory Value", yaxis_title="Material")
+        high_event = chart_event(clean_chart(fig_high, 560), "high_value_chart_popup")
+        clicked_high = get_clicked_value(high_event, "y")
+        if clicked_high:
+            popup_title = f"High Value Material Drilldown: {clicked_high}"
+            popup_df = filtered_df[filtered_df["MATERIAL_DISPLAY"].astype(str) == str(clicked_high)].copy()
+
+    c9, c10 = st.columns(2)
+
+    with c9:
+        st.markdown("### WBS Material Count")
+        wbs_count_chart = (
+            filtered_df.groupby("WBS_ELEMENT", dropna=True)
+            .agg(MATERIAL_COUNT=("MATERIAL", "nunique"), TOTAL_VALUE=("TOTAL_VALUE", "sum"), TOTAL_STOCK=("TOTAL_STOCK", "sum"))
+            .reset_index()
+            .sort_values("MATERIAL_COUNT", ascending=False)
+            .head(top_n)
+        )
+        fig_wbs_count = px.bar(
+            wbs_count_chart,
+            x="MATERIAL_COUNT",
+            y="WBS_ELEMENT",
+            orientation="h",
+            text="MATERIAL_COUNT",
+            custom_data=["TOTAL_VALUE", "TOTAL_STOCK"],
+            title="Material Count by WBS Element"
+        )
+        fig_wbs_count.update_traces(
+            texttemplate="%{text:,.0f}",
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>%{y}</b><br>Material Count: %{x:,.0f}<br>Total Value: INR %{customdata[0]:,.2f}<br>Total Stock: %{customdata[1]:,.3f}<extra></extra>"
+        )
+        fig_wbs_count.update_layout(yaxis={"automargin": True, "categoryorder": "total ascending"}, xaxis_title="Material Count", yaxis_title="WBS Element")
+        wbs_count_event = chart_event(clean_chart(fig_wbs_count, 540), "wbs_count_chart_popup")
+        clicked_wbs_count = get_clicked_value(wbs_count_event, "y")
+        if clicked_wbs_count:
+            popup_title = f"WBS Material Count Drilldown: {clicked_wbs_count}"
+            popup_df = filtered_df[filtered_df["WBS_ELEMENT"].astype(str) == str(clicked_wbs_count)].copy()
+
+    with c10:
+        st.markdown("### Stock Status Split")
+        status_df = filtered_df.copy()
+        status_df["STOCK_STATUS"] = "Zero Stock"
+        status_df.loc[status_df["TOTAL_STOCK"] > 0, "STOCK_STATUS"] = "Positive Stock"
+        status_df.loc[status_df["TOTAL_STOCK"] < 0, "STOCK_STATUS"] = "Negative Stock"
+
+        stock_status_chart = (
+            status_df.groupby("STOCK_STATUS", dropna=True)
+            .agg(RECORD_COUNT=("MATERIAL", "count"), TOTAL_VALUE=("TOTAL_VALUE", "sum"), TOTAL_STOCK=("TOTAL_STOCK", "sum"))
+            .reset_index()
+            .sort_values("RECORD_COUNT", ascending=False)
+        )
+        fig_status = px.bar(
+            stock_status_chart,
+            x="RECORD_COUNT",
+            y="STOCK_STATUS",
+            orientation="h",
+            text="RECORD_COUNT",
+            custom_data=["TOTAL_VALUE", "TOTAL_STOCK"],
+            title="Stock Status by Record Count"
+        )
+        fig_status.update_traces(
+            texttemplate="%{text:,.0f}",
+            textposition="outside",
+            cliponaxis=False,
+            hovertemplate="<b>%{y}</b><br>Record Count: %{x:,.0f}<br>Total Value: INR %{customdata[0]:,.2f}<br>Total Stock: %{customdata[1]:,.3f}<extra></extra>"
+        )
+        fig_status.update_layout(yaxis={"automargin": True, "categoryorder": "total ascending"}, xaxis_title="Record Count", yaxis_title="Stock Status")
+        status_event = chart_event(clean_chart(fig_status, 540), "stock_status_chart_popup")
+        clicked_status = get_clicked_value(status_event, "y")
+        if clicked_status:
+            popup_title = f"Stock Status Drilldown: {clicked_status}"
+            if clicked_status == "Positive Stock":
+                popup_df = filtered_df[filtered_df["TOTAL_STOCK"] > 0].copy()
+            elif clicked_status == "Negative Stock":
+                popup_df = filtered_df[filtered_df["TOTAL_STOCK"] < 0].copy()
+            else:
+                popup_df = filtered_df[filtered_df["TOTAL_STOCK"] == 0].copy()
+
+    if popup_title and popup_df is not None:
+        show_drilldown_popup(popup_title, popup_df)
 
     st.divider()
-    st.markdown('<div class="section-title">Interactive Drill-down Panel</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Material Level Detail Records</div>', unsafe_allow_html=True)
+    detail_table(filtered_df.sort_values("TOTAL_VALUE", ascending=False), rows=500)
 
-    if drill_label == "All Data":
-        st.info("Click any chart above to drill down. Example: click one WBS / Material / Valuation Area.")
-    else:
-        st.success(f"Drill-down applied for {drill_label}")
+    csv = filtered_df.to_csv(index=False).encode("utf-8")
+    st.download_button("Download Filtered Records", csv, "MBBS_FILTERED_RECORDS.csv", "text/csv", use_container_width=True)
 
-    mini_summary(drill_df, "Selected Drilldown Summary")
-
-    dc1, dc2 = st.columns(2)
-
-    with dc1:
-        st.markdown("### Drilled Material Contribution")
-        drill_mat = (
-            drill_df.groupby(["MATERIAL", "MATERIAL_DISPLAY"], dropna=True)
-            .agg(TOTAL_VALUE=("TOTAL_VALUE", "sum"), TOTAL_STOCK=("TOTAL_STOCK", "sum"))
-            .reset_index().sort_values("TOTAL_VALUE", ascending=False).head(12)
-        )
-        fig_drill_mat = plot_horizontal_bar(
-            drill_mat, "TOTAL_VALUE", "MATERIAL_DISPLAY", "Material Split in Selection",
-            hover_data={"MATERIAL": True, "TOTAL_VALUE": ":,.2f", "TOTAL_STOCK": ":,.3f"},
-            height=520
-        )
-        st.plotly_chart(fig_drill_mat, use_container_width=True)
-
-    with dc2:
-        st.markdown("### Drilled WBS Contribution")
-        drill_wbs = (
-            drill_df.groupby("WBS_ELEMENT", dropna=True)
-            .agg(TOTAL_VALUE=("TOTAL_VALUE", "sum"), TOTAL_STOCK=("TOTAL_STOCK", "sum"), MATERIAL_COUNT=("MATERIAL", "nunique"))
-            .reset_index().sort_values("TOTAL_VALUE", ascending=False).head(12)
-        )
-        fig_drill_wbs = plot_horizontal_bar(
-            drill_wbs, "TOTAL_VALUE", "WBS_ELEMENT", "WBS Split in Selection",
-            hover_data={"TOTAL_VALUE": ":,.2f", "TOTAL_STOCK": ":,.3f", "MATERIAL_COUNT": ":,.0f"},
-            height=520
-        )
-        st.plotly_chart(fig_drill_wbs, use_container_width=True)
-
-    st.markdown("### Deep Dive Filters")
-    s1, s2, s3 = st.columns(3)
-    with s1:
-        deep_material = st.selectbox("Select Material", ["All"] + sorted(drill_df["MATERIAL"].astype(str).unique().tolist()), key="deep_material")
-    with s2:
-        deep_wbs = st.selectbox("Select WBS", ["All"] + sorted(drill_df["WBS_ELEMENT"].astype(str).unique().tolist()), key="deep_wbs")
-    with s3:
-        min_value = st.number_input("Minimum Inventory Value", min_value=0.0, value=0.0, step=100000.0, key="min_value")
-
-    deep_df = drill_df.copy()
-    if deep_material != "All":
-        deep_df = deep_df[deep_df["MATERIAL"].astype(str) == deep_material]
-    if deep_wbs != "All":
-        deep_df = deep_df[deep_df["WBS_ELEMENT"].astype(str) == deep_wbs]
-    if min_value > 0:
-        deep_df = deep_df[deep_df["TOTAL_VALUE"] >= min_value]
-
-    st.markdown("### Material Level Detail Records")
-    detail_table(deep_df.sort_values("TOTAL_VALUE", ascending=False), rows=500)
-
-    csv = deep_df.to_csv(index=False).encode("utf-8")
-    st.download_button("Download Drilled Records", csv, "MBBS_DRILLED_RECORDS.csv", "text/csv", use_container_width=True)
 
 # ------------------------------------------------------------
 # Data Explorer
